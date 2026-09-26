@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod math;
+mod pager;
 
 // The built-in defaults mirror Glamour's LightStyle and DarkStyle, which Glow uses.
 #[derive(Clone)]
@@ -88,7 +89,11 @@ impl Theme {
 struct Config {
     style: String,
     width: usize,
+    max_line_length: usize,
     render_latex: bool,
+    pager_poll_speed: usize,
+    pager_scroll_step: usize,
+    pager_mouse: bool,
     themes: HashMap<String, Theme>,
 }
 
@@ -97,14 +102,14 @@ impl Config {
         let mut themes = HashMap::new();
         themes.insert("glow-light".to_string(), Theme::glow_light());
         themes.insert("glow-dark".to_string(), Theme::glow_dark());
-        Self { style: "glow-light".to_string(), width: 0, render_latex: true, themes }
+        Self { style: "glow-light".to_string(), width: 0, max_line_length: 100, render_latex: true, pager_poll_speed: 60, pager_scroll_step: 2, pager_mouse: false, themes }
     }
 
-    fn theme(self) -> io::Result<(Theme, usize, bool)> {
+    fn theme(self) -> io::Result<(Theme, usize, usize, bool, usize, usize, bool)> {
         let theme = self.themes.get(&self.style).cloned().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("unknown md style: {}", self.style))
         })?;
-        Ok((theme, self.width, self.render_latex))
+        Ok((theme, self.width, self.max_line_length, self.render_latex, self.pager_poll_speed, self.pager_scroll_step, self.pager_mouse))
     }
 }
 
@@ -124,7 +129,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (theme, configured_width, render_latex) = config;
+    let (theme, configured_width, max_line_length, render_latex, pager_poll_speed, pager_scroll_step, pager_mouse) = config;
     math::set_enabled(render_latex);
     let width = if configured_width == 0 {
         terminal_columns().unwrap_or(80) as usize
@@ -137,7 +142,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.16");
+        println!("md 0.6.39");
         return;
     }
 
@@ -162,8 +167,12 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let rendered = render_markdown(&input, &theme, width);
-        match page(&rendered, editable_path.as_deref()) {
+        let mouse_enabled = pager_mouse && env::var_os("HERDR_ENV").is_none();
+        let render_width = if env::var_os("PAGER").is_none() && mouse_enabled { width.saturating_sub(1) } else { width };
+        let rendered = render_document(&input, &theme, render_width, max_line_length);
+        match page(&rendered, editable_path.as_deref(), pager_poll_speed, pager_scroll_step, mouse_enabled, |new_width| {
+            render_document(&input, &theme, new_width, max_line_length)
+        }) {
             Ok(PageAction::Done) => break,
             Ok(PageAction::Edit) => {
                 if let Some(path) = editable_path.as_deref() {
@@ -216,9 +225,31 @@ fn parse_config(contents: &str) -> io::Result<Config> {
                 config.width = value.trim().parse().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "md.yaml width must be an integer")
                 })?;
+            } else if let Some(value) = content.strip_prefix("max_line_length:") {
+                config.max_line_length = value.trim().parse().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml max_line_length must be an integer")
+                })?;
             } else if let Some(value) = content.strip_prefix("render_latex:") {
                 config.render_latex = value.trim().parse::<bool>().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "md.yaml render_latex must be true or false")
+                })?;
+            } else if let Some(value) = content.strip_prefix("pager_poll_speed:") {
+                config.pager_poll_speed = value.trim().parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_poll_speed must be a positive integer")
+                })?;
+                if config.pager_poll_speed == 0 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_poll_speed must be a positive integer"));
+                }
+            } else if let Some(value) = content.strip_prefix("pager_scroll_step:") {
+                config.pager_scroll_step = value.trim().parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_step must be a positive integer")
+                })?;
+                if config.pager_scroll_step == 0 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_step must be a positive integer"));
+                }
+            } else if let Some(value) = content.strip_prefix("pager_mouse:") {
+                config.pager_mouse = value.trim().parse::<bool>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_mouse must be true or false")
                 })?;
             } else if content == "styles:" {
                 in_styles = true;
@@ -276,6 +307,50 @@ fn read_input(paths: &[String]) -> io::Result<String> {
     Ok(combined)
 }
 
+fn normalized_lines(input: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut last_was_list = false;
+    for raw_line in input.lines() {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        let trimmed = line.trim();
+        let is_list = list_item(line).is_some();
+        let is_continuation = last_was_list
+            && !trimmed.is_empty()
+            && line.chars().take_while(|character| character.is_whitespace()).count() >= 2
+            && !is_list;
+        if is_continuation {
+            if let Some(previous) = lines.last_mut() {
+                previous.push(' ');
+                previous.push_str(trimmed);
+            }
+        } else {
+            lines.push(line.to_string());
+        }
+        last_was_list = if trimmed.is_empty() { false } else { is_list || is_continuation };
+    }
+    lines
+}
+
+fn render_document(input: &str, theme: &Theme, terminal_width: usize, max_line_length: usize) -> String {
+    let margin_width = theme.margin_left + theme.margin_right;
+    let available = terminal_width.saturating_sub(margin_width);
+    let column_width = if max_line_length == 0 {
+        available
+    } else {
+        available.min(max_line_length)
+    };
+    let render_width = column_width + margin_width;
+    let rendered = render_markdown(input, theme, render_width);
+    let outer_padding = terminal_width.saturating_sub(render_width) / 2;
+    if outer_padding == 0 {
+        return rendered;
+    }
+    rendered
+        .lines()
+        .map(|line| format!("{}{}{}\n", " ".repeat(outer_padding), line, " ".repeat(outer_padding)))
+        .collect()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BlockKind {
     List,
@@ -284,14 +359,15 @@ enum BlockKind {
 
 fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut output = String::with_capacity(input.len() + input.len() / 8);
+    push_line(&mut output, "", theme);
     let mut paragraph: Vec<String> = Vec::new();
     let mut in_code = false;
     let mut math_block: Option<(String, String, String)> = None;
     let mut previous_block: Option<BlockKind> = None;
     let mut suppress_blank = false;
 
-    for raw_line in input.lines() {
-        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+    for raw_line in normalized_lines(input) {
+        let line = raw_line.as_str();
         let trimmed = line.trim_start();
 
         if is_fence(trimmed) {
@@ -431,6 +507,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     if let Some((opening, closing, body)) = math_block {
         push_math_display(&mut output, &opening, &closing, &body, theme, width);
     }
+    ensure_blank_line(&mut output, theme);
     output
 }
 
@@ -572,6 +649,16 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
         }
         let glued = !tokens.is_empty() && position == whitespace_start;
         let start = position;
+        if text[position..].starts_with("**") || text[position..].starts_with("__") {
+            let marker = &text[position..position + 2];
+            if let Some(end) = text[position + 2..].find(marker) {
+                position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: word.chars().count().saturating_sub(4), code: false, glued });
+                continue;
+            }
+        }
         if text[position..].starts_with('`') {
             if let Some(end) = text[position + 1..].find('`') {
                 let end = position + 1 + end;
@@ -605,7 +692,15 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
                 continue;
             }
         }
-        if text[position..].starts_with('$') && !text[position..].starts_with("$$") {
+        if text[position..].starts_with("$$") {
+            if let Some(end) = text[position + 2..].find("$$") {
+                position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                continue;
+            }
+        } else if text[position..].starts_with('$') {
             if let Some(end) = find_unescaped(text, position + 1, '$') {
                 position = end + 1;
                 consume_punctuation(text, &mut position);
@@ -615,6 +710,14 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
             }
         } else if text[position..].starts_with("\\(") {
             if let Some(end) = text[position + 2..].find("\\)") {
+                position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                continue;
+            }
+        } else if text[position..].starts_with("\\[") {
+            if let Some(end) = text[position + 2..].find("\\]") {
                 position += 2 + end + 2;
                 consume_punctuation(text, &mut position);
                 let word = &text[start..position];
@@ -632,12 +735,22 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
 }
 
 fn rendered_word_width(word: &str) -> usize {
-    if word.starts_with('$') && !word.starts_with("$$") {
+    if word.starts_with("$$") {
+        if let Some(end) = word[2..].find("$$") {
+            let end = end + 2;
+            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
+        }
+    } else if word.starts_with('$') {
         if let Some(end) = find_unescaped(word, 1, '$') {
             return math::render_inline(&word[1..end]).chars().count() + word[end + 1..].chars().count();
         }
     } else if word.starts_with("\\(") {
         if let Some(end) = word[2..].find("\\)") {
+            let end = end + 2;
+            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
+        }
+    } else if word.starts_with("\\[") {
+        if let Some(end) = word[2..].find("\\]") {
             let end = end + 2;
             return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
         }
@@ -728,8 +841,11 @@ fn inline_math_at(input: &str, index: usize) -> Option<(&str, usize)> {
     let rest = &input[index..];
     let (opening, closing) = if rest.starts_with("\\(") {
         ("\\(", "\\)")
+    } else if rest.starts_with("\\[") {
+        ("\\[", "\\]")
+    } else if rest.starts_with("$$") {
+        ("$$", "$$")
     } else if rest.starts_with('$')
-        && !rest.starts_with("$$")
         && !rest[1..].chars().next().is_some_and(|character| character.is_whitespace())
     {
         ("$", "$")
@@ -752,6 +868,10 @@ fn underscore_in_word(input: &str, index: usize) -> bool {
 }
 
 fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
+    render_inline_with_bold(input, base_foreground, theme, false)
+}
+
+fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold_active: bool) -> String {
     let mut output = String::with_capacity(input.len() + 16);
     output.push_str(&fg(base_foreground));
     let mut index = 0;
@@ -775,8 +895,8 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
             let marker = &input[index..index + 2];
             if let Some(end) = input[index + 2..].find(marker) {
                 output.push_str(BOLD);
-                output.push_str(&render_inline(&input[index + 2..index + 2 + end], base_foreground, theme));
-                output.push_str(&restore(base_foreground));
+                output.push_str(&render_inline_with_bold(&input[index + 2..index + 2 + end], base_foreground, theme, true));
+                output.push_str(&restore_inline(base_foreground, bold_active));
                 index += end + 4;
             } else {
                 output.push_str(marker);
@@ -788,7 +908,7 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
             if let Some(end) = input[index + 1..].find('`') {
                 output.push_str(&style(theme.inline_code_fg, Some(theme.inline_code_bg), false, false, false));
                 output.push_str(&input[index + 1..index + 1 + end]);
-                output.push_str(&restore(base_foreground));
+                output.push_str(&restore_inline(base_foreground, bold_active));
                 index += end + 2;
                 continue;
             }
@@ -820,7 +940,7 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
             if let Some(end) = input[index + 1..].find(marker) {
                 output.push_str(ITALIC);
                 output.push_str(&input[index + 1..index + 1 + end]);
-                output.push_str(&restore(base_foreground));
+                output.push_str(&restore_inline(base_foreground, bold_active));
                 index += end + 2;
             } else {
                 output.push_str(marker);
@@ -831,6 +951,14 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
         let character = rest.chars().next().unwrap();
         output.push(character);
         index += character.len_utf8();
+    }
+    output
+}
+
+fn restore_inline(foreground: u8, bold_active: bool) -> String {
+    let mut output = restore(foreground);
+    if bold_active {
+        output.push_str(BOLD);
     }
     output
 }
@@ -1192,8 +1320,17 @@ fn run_editor(path: &Path) -> io::Result<()> {
     }
 }
 
-fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> {
-    let use_default_pager = env::var_os("PAGER").is_none();
+fn page<F>(rendered: &str, editable_path: Option<&Path>, pager_poll_speed: usize, pager_scroll_step: usize, mouse_enabled: bool, rerender: F) -> io::Result<PageAction>
+where
+    F: FnMut(usize) -> String,
+{
+    if env::var_os("PAGER").is_none() {
+        return match pager::run(rendered, editable_path.is_some(), pager_poll_speed, pager_scroll_step, mouse_enabled, rerender)? {
+            pager::Action::Done => Ok(PageAction::Done),
+            pager::Action::Edit => Ok(PageAction::Edit),
+        };
+    }
+    let use_default_pager = false;
     let keymap = if use_default_pager && editable_path.is_some() {
         Some(write_less_edit_keymap()?)
     } else {

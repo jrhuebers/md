@@ -16,10 +16,15 @@ while blank-line paragraph breaks remain. Inline math spans are kept intact
 while wrapping paragraphs; inline code spans wrap at their internal spaces, and
 punctuation at soft line breaks is joined naturally. Block transitions between
 paragraphs, lists, and blockquotes receive a blank line.
-Every heading is followed by one empty line.
+Every heading is followed by one empty line. Rendered documents also have
+exactly one blank line at the beginning and end.
 
-Pager mode is always used: `$PAGER`, or `less -R` when `$PAGER` is unset.
-There is no mouse handling or TUI document viewer. Inline and display math using
+Pager mode is always used. With `$PAGER` unset, `md` uses its built-in
+terminal pager with keyboard scrolling, automatic terminal-size tracking, and
+a mouse-steerable right-side scrollbar. Mouse reporting is automatically
+disabled inside Herdr so the multiplexer can continue handling text selection.
+Set `$PAGER` to use an external pager such as `less -R`. There is no separate
+document TUI. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
 letters, operators, matrices, and cases. Display math is centered as a single
@@ -37,9 +42,9 @@ so both their beginning and filename remain visible. Press `e` to edit the
 selected file, or Enter to open it. The page dots and key hint stay at the
 bottom of the terminal even on a short final page; press `q` to quit.
 
-When viewing a single file in the default `less` pager, press `e` to open the
-file in `$VISUAL`, `$EDITOR`, or `vi`. The document is re-rendered after the
-editor exits. This edit key is available with the default pager only.
+When viewing a single file in the built-in pager, press `e` to open the file
+in `$VISUAL`, `$EDITOR`, or `vi`. The document is re-rendered after the editor
+exits. This shortcut is unavailable when `$PAGER` selects an external pager.
 
 ## Configuration
 
@@ -48,11 +53,21 @@ Select a style and configure the terminal width in `~/.config/md.yaml`:
 ```yaml
 style: glow-dark
 width: 0
+max_line_length: 100
 render_latex: true
+pager_poll_speed: 60
+pager_scroll_step: 2
+pager_mouse: false
 ```
 
 Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
 `\[...\]` math source uncompiled. The default is `true`.
+`max_line_length` limits the Markdown content column and centers it when the
+terminal is wider; it defaults to 100, while `0` follows the available width.
+`pager_poll_speed` controls how frequently the built-in pager polls and processes
+queued key events. `pager_scroll_step` controls the number of lines moved by one
+`j`/`k` or arrow event and defaults to 2. `pager_mouse` enables mouse wheel and scrollbar interaction outside Herdr and
+defaults to `false`. When disabled, the scrollbar column is removed.
 
 Add or adjust a style block under `styles:` using the color fields and margin
 fields shown in the tracked example.
@@ -87,8 +102,11 @@ md .
 printf '# Heading\n\nMarkdown from stdin.\n' | md -
 ```
 
-Use `PAGER=cat` for a non-interactive smoke test. The command accepts one or
-more Markdown paths; `-` reads standard input.
+The built-in pager uses `q` to quit, `j`/`k` or arrow keys to scroll,
+PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D for half-page jumps, Space for the next page and `b` for the previous page, `g`/`G` for the beginning/end, mouse-wheel scrolling,
+scrollbar click-and-drag outside Herdr, and `e` to edit a single file. Use
+`PAGER=cat` for a non-interactive smoke test. The command accepts one or more
+Markdown paths; `-` reads standard input.
 
 ## Removal
 

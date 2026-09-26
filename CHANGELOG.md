@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Ensure exactly one blank line of terminal breathing room at the beginning and
+  end of rendered documents.
+- Add `max_line_length` to center Markdown in a narrower content column when
+  the terminal has more horizontal space; the default is 100 columns.
+- Scrollbar dragging now preserves the thumb position on mouse-down and follows
+  the pointer's vertical delta until release; track clicks still jump. The
+  hovered thumb is visually expanded and centered in its cell; the thumb uses a
+  centered heavy vertical bar rather than a dot, without reverse-video artifacts;
+  normal and hovered handles use the same dark foreground color, while the
+  thin track line uses a slightly darker gray.
+
+### Added
+
+- First built-in pager implementation with automatic terminal-size tracking,
+  keyboard scrolling, a mouse-steerable right-side scrollbar, a position
+  indicator, and `e` editing for single files.
+- Renamed `pager_scroll_speed` to `pager_poll_speed` to reflect that it controls
+  input polling rather than movement distance.
+- Added `pager_scroll_step`, currently set to 2, for the number of lines moved
+  by one `j`/`k` or arrow event.
+- Half-page jumps for PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D; status
+  text uses the compact `Space/b page` label again.
+- Disable mouse reporting inside Herdr so multiplexer text selection continues
+  to work.
+- Add `pager_mouse`, defaulting to `false`, so mouse capture and the scrollbar
+  column can remain off while selection and copy behavior is being designed.
+- Inline code spans now wrap at internal spaces while preserving their styling.
+
 ## [0.6.16] - 2026-09-26
 
 ### Added
@@ -31,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve bold spans containing inline code, including the bold styling after
+  the code span.
+- Join indented continuation lines with their list item instead of inserting
+  paragraph breaks inside wrapped list content.
+- Render display-style math delimiters used within list continuations without
+  leaving raw `$$...$$` or `\\[...\\]` source in the output.
+- Avoid full-screen clearing during ordinary scrolling, eliminating the
+  associated redraw flicker.
 - Spacing between paragraphs, lists, blockquotes, and headings.
 - Punctuation and inline math split across source soft line breaks.
 

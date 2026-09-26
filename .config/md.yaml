@@ -2,8 +2,17 @@
 style: md-light
 # 0 follows the terminal width; a positive value overrides it.
 width: 0
+# 0 follows the available width; a positive value centers a narrower column.
+# This is the Markdown content width, excluding style margins.
+max_line_length: 100
 # Translate supported LaTeX math to terminal Unicode.
 render_latex: true
+# Built-in pager input processing frequency in polls per second.
+pager_poll_speed: 60
+# Lines moved by one j/k or arrow event.
+pager_scroll_step: 2
+# Enable mouse wheel and scrollbar interaction outside Herdr.
+pager_mouse: false
 
 styles:
   md-light:

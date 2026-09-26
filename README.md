@@ -21,13 +21,18 @@ more control over math rendering.
   its internal layout.
 - Provides configurable Glow-inspired light and dark styles, colors, margins,
   terminal width, and optional LaTeX conversion.
-- Uses `$PAGER` when set, or `less -R` by default.
+- Uses a built-in terminal pager by default, with keyboard scrolling, an
+  auto-adapting viewport, a mouse-steerable scrollbar (automatically disabled
+  inside Herdr so multiplexer selection remains available), and a position
+  indicator. PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D make half-page jumps;
+  Space moves to the next page and `b` to the previous page. `$PAGER` can override it with an external
+  pager such as `less -R`.
 - Opens directories with an interactive Markdown file picker with paging,
   live file counts, navigation, and editor shortcuts.
 
-`md` is intentionally a pager-oriented viewer rather than a full CommonMark or
-GFM implementation. It has no mouse-driven document UI and does not require
-Glow.
+`md` adds one blank line of terminal breathing room at the beginning and end
+of each rendered document. It is intentionally a pager-oriented viewer rather
+than a full CommonMark or GFM implementation and does not require Glow.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for notable changes by release.
 
@@ -49,18 +54,27 @@ Configuration normally lives at `~/.config/md.yaml`:
 ```yaml
 style: glow-dark
 width: 0
+max_line_length: 100
 render_latex: true
+pager_poll_speed: 60
+pager_scroll_step: 2
+pager_mouse: false
 ```
 
 `render_latex: false` leaves supported math delimiters and source unchanged.
-Named styles can customize foreground/background colors and left/right margins.
+`max_line_length` limits the Markdown content column and centers it when the
+terminal is wider; it defaults to 100, while `0` uses the available width.
+`pager_poll_speed` controls how often the built-in pager polls and processes
+queued key events. `pager_scroll_step` controls the number of lines moved by one
+`j`/`k` or arrow event and defaults to 2. `pager_mouse` enables mouse wheel and scrollbar interaction outside Herdr; it
+defaults to `false`. When disabled, the scrollbar column is removed. Named styles can customize
+foreground/background colors and left/right margins.
 See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 [`docs/md.md`](docs/md.md) for the full configuration and behavior reference.
 
 ## Build and install
 
-The viewer is a single Rust source file and can be built without a Cargo
-project:
+The viewer is a small Rust program and can be built without a Cargo project:
 
 ```sh
 mkdir -p ~/.local/bin

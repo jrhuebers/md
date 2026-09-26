@@ -141,7 +141,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.35");
+        println!("md 0.6.36");
         return;
     }
 
@@ -676,7 +676,15 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
                 continue;
             }
         }
-        if text[position..].starts_with('$') && !text[position..].starts_with("$$") {
+        if text[position..].starts_with("$$") {
+            if let Some(end) = text[position + 2..].find("$$") {
+                position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                continue;
+            }
+        } else if text[position..].starts_with('$') {
             if let Some(end) = find_unescaped(text, position + 1, '$') {
                 position = end + 1;
                 consume_punctuation(text, &mut position);
@@ -686,6 +694,14 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
             }
         } else if text[position..].starts_with("\\(") {
             if let Some(end) = text[position + 2..].find("\\)") {
+                position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                continue;
+            }
+        } else if text[position..].starts_with("\\[") {
+            if let Some(end) = text[position + 2..].find("\\]") {
                 position += 2 + end + 2;
                 consume_punctuation(text, &mut position);
                 let word = &text[start..position];
@@ -703,12 +719,22 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
 }
 
 fn rendered_word_width(word: &str) -> usize {
-    if word.starts_with('$') && !word.starts_with("$$") {
+    if word.starts_with("$$") {
+        if let Some(end) = word[2..].find("$$") {
+            let end = end + 2;
+            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
+        }
+    } else if word.starts_with('$') {
         if let Some(end) = find_unescaped(word, 1, '$') {
             return math::render_inline(&word[1..end]).chars().count() + word[end + 1..].chars().count();
         }
     } else if word.starts_with("\\(") {
         if let Some(end) = word[2..].find("\\)") {
+            let end = end + 2;
+            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
+        }
+    } else if word.starts_with("\\[") {
+        if let Some(end) = word[2..].find("\\]") {
             let end = end + 2;
             return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
         }
@@ -799,8 +825,11 @@ fn inline_math_at(input: &str, index: usize) -> Option<(&str, usize)> {
     let rest = &input[index..];
     let (opening, closing) = if rest.starts_with("\\(") {
         ("\\(", "\\)")
+    } else if rest.starts_with("\\[") {
+        ("\\[", "\\]")
+    } else if rest.starts_with("$$") {
+        ("$$", "$$")
     } else if rest.starts_with('$')
-        && !rest.starts_with("$$")
         && !rest[1..].chars().next().is_some_and(|character| character.is_whitespace())
     {
         ("$", "$")

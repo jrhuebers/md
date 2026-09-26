@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Join indented continuation lines with their list item instead of inserting
   paragraph breaks inside wrapped list content.
+- Render display-style math delimiters used within list continuations without
+  leaving raw `$$...$$` or `\\[...\\]` source in the output.
 - Avoid full-screen clearing during ordinary scrolling, eliminating the
   associated redraw flicker.
 - Spacing between paragraphs, lists, blockquotes, and headings.

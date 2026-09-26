@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.10");
+        println!("md 0.6.11");
         return;
     }
 
@@ -435,13 +435,29 @@ fn flush_paragraph(paragraph: &mut Vec<String>, output: &mut String, theme: &The
     if paragraph.is_empty() {
         return;
     }
-    let joined = paragraph.join(" ");
+    let joined = join_paragraph(paragraph);
     let available = width.saturating_sub(theme.margin_left + theme.margin_right).max(1);
     for chunk in wrap_text(&joined, available) {
         let rendered = format!("{}{}{}", fg(theme.normal_fg), render_inline(&chunk, theme.normal_fg, theme), RESET);
         push_line(output, &rendered, theme);
     }
     paragraph.clear();
+}
+
+fn join_paragraph(lines: &[String]) -> String {
+    let mut joined = String::new();
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let starts_with_punctuation = line.chars().next().is_some_and(|character| ",.;:!?)]}".contains(character));
+        if !joined.is_empty() && !starts_with_punctuation {
+            joined.push(' ');
+        }
+        joined.push_str(line);
+    }
+    joined
 }
 
 fn push_line(output: &mut String, content: &str, theme: &Theme) {
@@ -484,14 +500,17 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 }
 
 fn rendered_word_width(word: &str) -> usize {
-    let source = if word.starts_with('$') && !word.starts_with("$$") {
-        word.strip_prefix('$').and_then(|value| value.strip_suffix('$'))
+    if word.starts_with('$') && !word.starts_with("$$") {
+        if let Some(end) = find_unescaped(word, 1, '$') {
+            return math::render_inline(&word[1..end]).chars().count() + word[end + 1..].chars().count();
+        }
     } else if word.starts_with("\\(") {
-        word.strip_prefix("\\(").and_then(|value| value.strip_suffix("\\)"))
-    } else {
-        None
-    };
-    source.map(|value| math::render_inline(value).chars().count()).unwrap_or_else(|| word.chars().count())
+        if let Some(end) = word[2..].find("\\)") {
+            let end = end + 2;
+            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
+        }
+    }
+    word.chars().count()
 }
 
 fn paragraph_words(text: &str) -> Vec<String> {
@@ -508,12 +527,14 @@ fn paragraph_words(text: &str) -> Vec<String> {
         if text[position..].starts_with('$') && !text[position..].starts_with("$$") {
             if let Some(end) = find_unescaped(text, position + 1, '$') {
                 position = end + 1;
+                consume_punctuation(text, &mut position);
                 words.push(text[start..position].to_string());
                 continue;
             }
         } else if text[position..].starts_with("\\(") {
             if let Some(end) = text[position + 2..].find("\\)") {
                 position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
                 words.push(text[start..position].to_string());
                 continue;
             }
@@ -524,6 +545,12 @@ fn paragraph_words(text: &str) -> Vec<String> {
         words.push(text[start..position].to_string());
     }
     words
+}
+
+fn consume_punctuation(text: &str, position: &mut usize) {
+    while *position < text.len() && matches!(text.as_bytes()[*position], b'.' | b',' | b';' | b':' | b'!' | b'?') {
+        *position += 1;
+    }
 }
 
 fn find_unescaped(text: &str, start: usize, delimiter: char) -> Option<usize> {

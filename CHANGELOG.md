@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.41] - 2026-09-26
+
+### Added
+
+- Render GitHub-Flavored Markdown tables with Glamour-style aligned columns, header rules, alignment markers, and narrow-terminal wrapping.
+
 ## [0.6.40] - 2026-09-26
 
 ### Fixed
@@ -80,7 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spacing between paragraphs, lists, blockquotes, and headings.
 - Punctuation and inline math split across source soft line breaks.
 
-[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.40...HEAD
+[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.41...HEAD
+[0.6.41]: https://github.com/jrhuebers/md/compare/v0.6.40...v0.6.41
 [0.6.40]: https://github.com/jrhuebers/md/compare/v0.6.39...v0.6.40
 [0.6.39]: https://github.com/jrhuebers/md/compare/v0.6.16...v0.6.39
 [0.6.16]: https://github.com/jrhuebers/md/releases/tag/v0.6.16

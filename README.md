@@ -7,8 +7,7 @@ more control over math rendering.
 
 ## What it does
 
-- Renders headings, paragraphs, emphasis, links, code spans, fenced code,
-  nested lists, blockquotes, rules, and common Markdown structure.
+- Renders headings, paragraphs, emphasis, links, code spans, fenced code, nested lists, blockquotes, rules, tables, and common Markdown structure.
 - Reflows soft line breaks within paragraphs while preserving paragraph and
   block boundaries.
 - Wraps long inline code spans at their internal spaces without losing code
@@ -95,7 +94,7 @@ Pi math bridge, its vendored renderer, and an example configuration. To install
 a release manually:
 
 ```sh
-version=0.6.40
+version=0.6.41
 archive="md-v${version}-x86_64-unknown-linux-gnu.tar.gz"
 tar -xzf "$archive"
 cd "md-v${version}-x86_64-unknown-linux-gnu"

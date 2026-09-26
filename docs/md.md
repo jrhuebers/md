@@ -9,13 +9,7 @@ selection. The included `md-light`, `glow-light`, and `glow-dark` styles use
 Glow/Glamour colors; `md-light` uses a black code-block foreground. `margin_left` and `margin_right` are independently
 configurable; both default to one space.
 
-`width: 0` follows the terminal width. Paragraphs are reflowed to that width,
-and wrapped list continuation lines are indented beneath their bullet. Nested
-lists retain two spaces of indentation per level. Single newlines are reflowed
-while blank-line paragraph breaks remain. Inline math spans are kept intact
-while wrapping paragraphs; inline code spans wrap at their internal spaces, and
-punctuation at soft line breaks is joined naturally. Block transitions between
-paragraphs, lists, and blockquotes receive a blank line.
+`width: 0` follows the terminal width. Paragraphs are reflowed to that width, and wrapped list continuation lines are indented beneath their bullet. Nested lists retain two spaces of indentation per level. Single newlines are reflowed while blank-line paragraph breaks remain. Inline math spans are kept intact while wrapping paragraphs; inline code spans wrap at their internal spaces, and punctuation at soft line breaks is joined naturally. GitHub-Flavored Markdown tables render with Glamour-style aligned columns, header rules, alignment markers, and wrapping for narrow terminals. Block transitions between paragraphs, lists, blockquotes, and tables receive a blank line.
 Every heading is followed by one empty line. Rendered documents also have
 exactly one blank line at the beginning and end.
 

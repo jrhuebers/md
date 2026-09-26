@@ -142,7 +142,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.40");
+        println!("md 0.6.41");
         return;
     }
 
@@ -366,7 +366,8 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut previous_block: Option<BlockKind> = None;
     let mut suppress_blank = false;
 
-    for raw_line in normalized_lines(input) {
+    let mut lines = normalized_lines(input).into_iter().peekable();
+    while let Some(raw_line) = lines.next() {
         let line = raw_line.as_str();
         let trimmed = line.trim_start();
 
@@ -412,6 +413,28 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
         suppress_blank = false;
+        if !in_code && math_block.is_none() {
+            let header = table_row(line);
+            let alignments = lines.peek().and_then(|candidate| table_alignments(candidate));
+            if let (Some(header), Some(alignments)) = (header, alignments) {
+                if header.len() == alignments.len() {
+                    let _separator = lines.next();
+                    let mut rows = Vec::new();
+                    while let Some(candidate) = lines.peek() {
+                        if let Some(row) = table_row(candidate) {
+                            rows.push(row);
+                            let _ = lines.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    flush_paragraph(&mut paragraph, &mut output, theme, width);
+                    render_table(&mut output, header, alignments, rows, theme, width);
+                    previous_block = None;
+                    continue;
+                }
+            }
+        }
         if let Some((opening, closing)) = display_math_delimiter(trimmed) {
             previous_block = None;
             let body_start = opening.len();
@@ -549,6 +572,251 @@ fn flush_paragraph(paragraph: &mut Vec<String>, output: &mut String, theme: &The
         push_line(output, &rendered, theme);
     }
     paragraph.clear();
+}
+
+#[derive(Clone, Copy)]
+enum TableAlignment {
+    Left,
+    Center,
+    Right,
+}
+
+// This follows Glamour's table shape: cell margins, vertical separators, and
+// a rule below the header, but no enclosing top or bottom border.
+fn table_row(line: &str) -> Option<Vec<String>> {
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut in_code = false;
+    let mut escaped = false;
+    let mut has_pipe = false;
+
+    for character in line.trim().chars() {
+        if escaped {
+            if character == '|' {
+                cell.push('|');
+            } else {
+                cell.push('\\');
+                cell.push(character);
+            }
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == '`' {
+            in_code = !in_code;
+            cell.push(character);
+        } else if character == '|' && !in_code {
+            has_pipe = true;
+            cells.push(cell.trim().to_string());
+            cell.clear();
+        } else {
+            cell.push(character);
+        }
+    }
+    if escaped {
+        cell.push('\\');
+    }
+    cells.push(cell.trim().to_string());
+    if !has_pipe {
+        return None;
+    }
+    if cells.first().is_some_and(String::is_empty) {
+        cells.remove(0);
+    }
+    if cells.last().is_some_and(String::is_empty) {
+        cells.pop();
+    }
+    (!cells.is_empty()).then_some(cells)
+}
+
+fn table_alignments(line: &str) -> Option<Vec<TableAlignment>> {
+    let cells = table_row(line)?;
+    let mut alignments = Vec::with_capacity(cells.len());
+    for cell in cells {
+        let cell = cell.trim();
+        let left = cell.starts_with(':');
+        let right = cell.ends_with(':');
+        let start = usize::from(left);
+        let end = cell.len().saturating_sub(usize::from(right));
+        let dashes = &cell[start..end];
+        if dashes.len() < 3 || !dashes.chars().all(|character| character == '-') {
+            return None;
+        }
+        alignments.push(match (left, right) {
+            (true, true) => TableAlignment::Center,
+            (false, true) => TableAlignment::Right,
+            _ => TableAlignment::Left,
+        });
+    }
+    Some(alignments)
+}
+
+fn render_table(
+    output: &mut String,
+    header: Vec<String>,
+    alignments: Vec<TableAlignment>,
+    mut rows: Vec<Vec<String>>,
+    theme: &Theme,
+    width: usize,
+) {
+    let columns = header.len();
+    for row in &mut rows {
+        row.resize(columns, String::new());
+        row.truncate(columns);
+    }
+
+    let mut column_widths = vec![1; columns];
+    for (column, cell) in header.iter().enumerate() {
+        column_widths[column] = column_widths[column].max(table_cell_width(cell, theme));
+    }
+    for row in &rows {
+        for (column, cell) in row.iter().enumerate() {
+            column_widths[column] = column_widths[column].max(table_cell_width(cell, theme));
+        }
+    }
+
+    // Glamour gives every cell a one-column left margin. The remaining space
+    // is shared by columns, shrinking the widest columns first when needed.
+    let available = width.saturating_sub(theme.margin_left + theme.margin_right);
+    let overhead = columns.saturating_mul(2).saturating_sub(1);
+    let content_width = available.saturating_sub(overhead).max(columns);
+    while column_widths.iter().sum::<usize>() > content_width {
+        let widest = column_widths
+            .iter()
+            .enumerate()
+            .filter(|(_, width)| **width > 1)
+            .max_by_key(|(_, width)| **width)
+            .map(|(column, _)| column);
+        let Some(column) = widest else { break };
+        column_widths[column] -= 1;
+    }
+
+    ensure_blank_line(output, theme);
+    render_table_row(output, &header, &column_widths, &alignments, theme);
+    let separator = column_widths
+        .iter()
+        .map(|column_width| "─".repeat(column_width + 1))
+        .collect::<Vec<_>>()
+        .join("┼");
+    push_line(output, &format!("{}{}{}", fg(theme.rule_fg), separator, RESET), theme);
+    for row in rows {
+        render_table_row(output, &row, &column_widths, &alignments, theme);
+    }
+    ensure_blank_line(output, theme);
+}
+
+fn table_cell_width(cell: &str, theme: &Theme) -> usize {
+    visible_width(&render_inline(cell, theme.normal_fg, theme)).max(1)
+}
+
+fn render_table_row(
+    output: &mut String,
+    cells: &[String],
+    column_widths: &[usize],
+    alignments: &[TableAlignment],
+    theme: &Theme,
+) {
+    let mut rendered_cells = Vec::new();
+    let mut row_height = 1;
+    for (column, cell) in cells.iter().enumerate() {
+        let lines = wrap_text(cell, column_widths[column]);
+        row_height = row_height.max(lines.len());
+        rendered_cells.push(lines);
+    }
+
+    for line_number in 0..row_height {
+        let mut rendered = String::new();
+        for column in 0..cells.len() {
+            if column > 0 {
+                rendered.push_str(&format!("{}│{}", fg(theme.rule_fg), RESET));
+            }
+            let source = rendered_cells[column].get(line_number).map(String::as_str).unwrap_or("");
+            let styled = render_inline(source, theme.normal_fg, theme);
+            let styled = truncate_ansi(&styled, column_widths[column]);
+            let used = visible_width(&styled);
+            let padding = column_widths[column].saturating_sub(used);
+            let (left, right) = match alignments[column] {
+                TableAlignment::Left => (0, padding),
+                TableAlignment::Right => (padding, 0),
+                TableAlignment::Center => (padding / 2, padding - padding / 2),
+            };
+            rendered.push(' ');
+            rendered.push_str(&" ".repeat(left));
+            rendered.push_str(&styled);
+            rendered.push_str(&" ".repeat(right));
+            rendered.push_str(RESET);
+        }
+        push_line(output, &rendered, theme);
+    }
+}
+
+fn visible_width(text: &str) -> usize {
+    let mut width = 0;
+    let mut bytes = text.as_bytes();
+    while !bytes.is_empty() {
+        if bytes[0] == 0x1b {
+            if bytes.get(1) == Some(&b'[') {
+                let end = bytes[2..].iter().position(|byte| (0x40..=0x7e).contains(byte)).map(|index| index + 3).unwrap_or(bytes.len());
+                bytes = &bytes[end..];
+            } else if bytes.get(1) == Some(&b']') {
+                let end = bytes[2..].iter().position(|byte| *byte == 0x07).map(|index| index + 3).unwrap_or(bytes.len());
+                bytes = &bytes[end..];
+            } else {
+                bytes = &bytes[1..];
+            }
+        } else if let Some(character) = text[text.len() - bytes.len()..].chars().next() {
+            width += 1;
+            bytes = &bytes[character.len_utf8()..];
+        } else {
+            break;
+        }
+    }
+    width
+}
+
+fn truncate_ansi(text: &str, width: usize) -> String {
+    if visible_width(text) <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut result = String::new();
+    let mut visible = 0;
+    let mut position = 0;
+    while position < text.len() && visible + 1 < width {
+        let bytes = text.as_bytes();
+        if bytes[position] == 0x1b {
+            let start = position;
+            position += 1;
+            if bytes.get(position) == Some(&b'[') {
+                position += 1;
+                while position < text.len() {
+                    let byte = bytes[position];
+                    position += 1;
+                    if (0x40..=0x7e).contains(&byte) {
+                        break;
+                    }
+                }
+            } else if bytes.get(position) == Some(&b']') {
+                position += 1;
+                while position < text.len() {
+                    let byte = bytes[position];
+                    position += 1;
+                    if byte == 0x07 {
+                        break;
+                    }
+                }
+            }
+            result.push_str(&text[start..position]);
+            continue;
+        }
+        let character = text[position..].chars().next().unwrap();
+        result.push(character);
+        position += character.len_utf8();
+        visible += 1;
+    }
+    result.push('…');
+    result
 }
 
 fn join_paragraph(lines: &[String]) -> String {
@@ -1430,5 +1698,26 @@ mod tests {
             let rendered = render_inline(&chunk, 234, &Theme::glow_light());
             assert!(!rendered.contains('`'), "visible backtick: {}", chunk);
         }
+    }
+
+    #[test]
+    fn parses_glamour_style_table_rows_and_alignment() {
+        assert_eq!(table_row("| Name | Age |"), Some(vec!["Name".into(), "Age".into()]));
+        assert!(matches!(table_alignments("| --- | :---: | ---: |"), Some(ref alignments) if alignments.len() == 3));
+        assert_eq!(table_row("Name | Note with `|`"), Some(vec!["Name".into(), "Note with `|`".into()]));
+    }
+
+    #[test]
+    fn renders_tables_with_aligned_columns_and_header_rule() {
+        let rendered = render_document(
+            "| Name | Age |\n| --- | ---: |\n| Alice | 30 |",
+            &Theme::glow_light(),
+            40,
+            0,
+        );
+        assert!(rendered.contains("│"));
+        assert!(rendered.contains("┼"));
+        assert!(rendered.contains("Alice"));
+        assert!(!rendered.contains("| --- |"));
     }
 }

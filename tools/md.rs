@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.7");
+        println!("md 0.6.8");
         return;
     }
 
@@ -461,21 +461,66 @@ fn ensure_blank_line(output: &mut String, theme: &Theme) {
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
-    for word in text.split_whitespace() {
+    for word in paragraph_words(text) {
         if current.is_empty() {
-            current.push_str(word);
+            current.push_str(&word);
         } else if current.chars().count() + 1 + word.chars().count() <= width {
             current.push(' ');
-            current.push_str(word);
+            current.push_str(&word);
         } else {
             lines.push(std::mem::take(&mut current));
-            current.push_str(word);
+            current.push_str(&word);
         }
     }
     if !current.is_empty() || lines.is_empty() {
         lines.push(current);
     }
     lines
+}
+
+fn paragraph_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut position = 0;
+    while position < text.len() {
+        while position < text.len() && text.as_bytes()[position].is_ascii_whitespace() {
+            position += 1;
+        }
+        if position >= text.len() {
+            break;
+        }
+        let start = position;
+        if text[position..].starts_with('$') && !text[position..].starts_with("$$") {
+            if let Some(end) = find_unescaped(text, position + 1, '$') {
+                position = end + 1;
+                words.push(text[start..position].to_string());
+                continue;
+            }
+        } else if text[position..].starts_with("\\(") {
+            if let Some(end) = text[position + 2..].find("\\)") {
+                position += 2 + end + 2;
+                words.push(text[start..position].to_string());
+                continue;
+            }
+        }
+        while position < text.len() && !text.as_bytes()[position].is_ascii_whitespace() {
+            position += 1;
+        }
+        words.push(text[start..position].to_string());
+    }
+    words
+}
+
+fn find_unescaped(text: &str, start: usize, delimiter: char) -> Option<usize> {
+    let mut search = start;
+    while let Some(offset) = text[search..].find(delimiter) {
+        let position = search + offset;
+        let backslashes = text[..position].chars().rev().take_while(|character| *character == '\\').count();
+        if backslashes % 2 == 0 {
+            return Some(position);
+        }
+        search = position + delimiter.len_utf8();
+    }
+    None
 }
 
 fn fg(color: u8) -> String {

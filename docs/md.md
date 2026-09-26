@@ -12,8 +12,8 @@ configurable; both default to one space.
 `width: 0` follows the terminal width. Paragraphs are reflowed to that width,
 and wrapped list continuation lines are indented beneath their bullet. Nested
 lists retain two spaces of indentation per level. Single newlines are reflowed
-while blank-line paragraph breaks remain. Every heading is followed by one
-empty line.
+while blank-line paragraph breaks remain. Inline math spans are kept intact
+while wrapping paragraphs. Every heading is followed by one empty line.
 
 Pager mode is always used: `$PAGER`, or `less -R` when `$PAGER` is unset. There
 is no mouse handling or TUI document viewer. Inline and display math using

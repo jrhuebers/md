@@ -22,8 +22,8 @@ more control over math rendering.
 - Provides configurable Glow-inspired light and dark styles, colors, margins,
   terminal width, and optional LaTeX conversion.
 - Uses a built-in terminal pager by default, with keyboard scrolling, an
-  auto-adapting viewport, a scrollbar, and a position indicator. `$PAGER` can
-  override it with an external pager such as `less -R`.
+  auto-adapting viewport, a mouse-steerable scrollbar, and a position
+  indicator. `$PAGER` can override it with an external pager such as `less -R`.
 - Opens directories with an interactive Markdown file picker with paging,
   live file counts, navigation, and editor shortcuts.
 
@@ -52,9 +52,12 @@ Configuration normally lives at `~/.config/md.yaml`:
 style: glow-dark
 width: 0
 render_latex: true
+pager_scroll_speed: 60
 ```
 
 `render_latex: false` leaves supported math delimiters and source unchanged.
+`pager_scroll_speed` controls how often the built-in pager polls and processes
+queued key events; it does not change the distance moved by one `j`/`k` event.
 Named styles can customize foreground/background colors and left/right margins.
 See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 [`docs/md.md`](docs/md.md) for the full configuration and behavior reference.

@@ -1,5 +1,9 @@
 use std::io::{self, Read, Write};
 use std::process::Command;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::thread;
+use std::time::Duration;
+
 const RESET: &str = "\x1b[0m";
 
 pub enum Action {
@@ -17,6 +21,16 @@ enum Key {
     Bottom,
     Quit,
     Edit,
+    Mouse(MouseEvent),
+}
+
+#[derive(Clone, Copy)]
+struct MouseEvent {
+    button: u8,
+    x: usize,
+    y: usize,
+    press: bool,
+    motion: bool,
 }
 
 struct TerminalGuard {
@@ -26,47 +40,158 @@ struct TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = restore_tty(&self.saved);
-        print!("\x1b[?25h\x1b[?1049l");
+        print!("\x1b[?1006l\x1b[?1002l\x1b[?25h\x1b[?1049l");
         let _ = io::stdout().flush();
     }
 }
 
-pub fn run(rendered: &str, editable: bool) -> io::Result<Action> {
+pub fn run<F>(rendered: &str, editable: bool, scroll_speed: usize, mut rerender: F) -> io::Result<Action>
+where
+    F: FnMut(usize) -> String,
+{
     let saved = stty(&["-g"])?;
-    stty(&["-icanon", "-echo", "min", "0", "time", "1"])?;
+    if let Err(error) = stty(&["-icanon", "-echo", "min", "0", "time", "1"]) {
+        let _ = restore_tty(&saved);
+        return Err(error);
+    }
     let _guard = TerminalGuard { saved };
-    print!("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l");
+    print!("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1002h\x1b[?1006h");
     io::stdout().flush()?;
 
-    let lines: Vec<&str> = rendered.lines().collect();
-    let total = lines.len().max(1);
+    let mut rendered = rendered.to_string();
+    let mut lines = collect_lines(&rendered);
+    let mut total = lines.len().max(1);
     let mut offset = 0usize;
-    let mut stdin = io::stdin();
+    let mut dragging = false;
+    let mut dirty = true;
+    let mut last_size: Option<(usize, usize)> = None;
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || input_thread(sender));
+    let poll_interval = Duration::from_millis((1000 / scroll_speed.max(1)) as u64);
 
     loop {
         let (rows, columns) = terminal_size().unwrap_or((24, 80));
         let viewport = rows.saturating_sub(1).max(1);
+        if let Some((old_rows, old_columns)) = last_size {
+            if old_columns != columns {
+                let old_viewport = old_rows.saturating_sub(1).max(1);
+                let old_max = total.saturating_sub(old_viewport);
+                let old_offset = offset;
+                rendered = rerender(columns.saturating_sub(1).max(1));
+                lines = collect_lines(&rendered);
+                total = lines.len().max(1);
+                let new_max = total.saturating_sub(viewport);
+                offset = if old_max == 0 {
+                    0
+                } else {
+                    old_offset.saturating_mul(new_max) / old_max
+                };
+                dirty = true;
+            } else if old_rows != rows {
+                dirty = true;
+            }
+        }
+        last_size = Some((rows, columns));
+
         let max_offset = total.saturating_sub(viewport);
         offset = offset.min(max_offset);
-        draw(&lines, offset, total, viewport, columns.max(2), editable);
+        if dirty {
+            draw(&lines, offset, total, viewport, columns.max(2), editable);
+            dirty = false;
+        }
 
-        if let Some(key) = read_key(&mut stdin)? {
-            match key {
-                Key::Up => offset = offset.saturating_sub(1),
-                Key::Down => offset = (offset + 1).min(max_offset),
-                Key::PageUp => offset = offset.saturating_sub(viewport),
-                Key::PageDown => offset = (offset + viewport).min(max_offset),
-                Key::Top => offset = 0,
-                Key::Bottom => offset = max_offset,
+        match receiver.recv_timeout(poll_interval) {
+            Ok(key) => match key {
+                Key::Up => {
+                    let next = offset.saturating_sub(1);
+                    dirty |= next != offset;
+                    offset = next;
+                }
+                Key::Down => {
+                    let next = (offset + 1).min(max_offset);
+                    dirty |= next != offset;
+                    offset = next;
+                }
+                Key::PageUp => {
+                    let next = offset.saturating_sub(viewport);
+                    dirty |= next != offset;
+                    offset = next;
+                }
+                Key::PageDown => {
+                    let next = (offset + viewport).min(max_offset);
+                    dirty |= next != offset;
+                    offset = next;
+                }
+                Key::Top => dirty |= offset != 0,
+                Key::Bottom => dirty |= offset != max_offset,
                 Key::Quit => return Ok(Action::Done),
                 Key::Edit if editable => return Ok(Action::Edit),
                 Key::Edit => {}
-            }
+                Key::Mouse(event) => {
+                    let next = handle_mouse(event, columns, viewport, total, offset, &mut dragging);
+                    dirty |= next != offset;
+                    offset = next;
+                }
+            },
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Ok(Action::Done),
         }
     }
 }
 
-fn draw(lines: &[&str], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool) {
+fn collect_lines(rendered: &str) -> Vec<String> {
+    rendered.lines().map(ToOwned::to_owned).collect()
+}
+
+fn input_thread(sender: Sender<Key>) {
+    let mut stdin = io::stdin();
+    loop {
+        match read_key(&mut stdin) {
+            Ok(Some(key)) if sender.send(key).is_err() => return,
+            Ok(Some(_)) => {}
+            Ok(None) => {}
+            Err(_) => return,
+        }
+    }
+}
+
+fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize, offset: usize, dragging: &mut bool) -> usize {
+    if event.button == 64 {
+        return offset.saturating_sub(2);
+    }
+    if event.button == 65 {
+        return (offset + 2).min(total.saturating_sub(viewport));
+    }
+    if event.button != 0 {
+        return offset;
+    }
+    if event.press && !event.motion && event.x >= columns.saturating_sub(1) && event.y <= viewport {
+        *dragging = true;
+    } else if !event.press {
+        *dragging = false;
+    }
+    if *dragging && (event.motion || event.press) {
+        scrollbar_offset(event.y.saturating_sub(1), viewport, total)
+    } else {
+        offset
+    }
+}
+
+fn scrollbar_offset(row: usize, viewport: usize, total: usize) -> usize {
+    let max_offset = total.saturating_sub(viewport);
+    if max_offset == 0 {
+        return 0;
+    }
+    let thumb_size = (viewport * viewport / total.max(1)).max(1).min(viewport);
+    let track = viewport.saturating_sub(thumb_size);
+    if track == 0 {
+        0
+    } else {
+        row.saturating_sub(thumb_size / 2).min(track) * max_offset / track
+    }
+}
+
+fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool) {
     let content_width = columns.saturating_sub(1).max(1);
     let thumb_size = if total <= viewport {
         viewport
@@ -82,7 +207,7 @@ fn draw(lines: &[&str], offset: usize, total: usize, viewport: usize, columns: u
 
     let mut screen = String::from("\x1b[2J\x1b[H");
     for row in 0..viewport {
-        let line = lines.get(offset + row).copied().unwrap_or("");
+        let line = lines.get(offset + row).map(String::as_str).unwrap_or("");
         let content = truncate_ansi(line, content_width);
         screen.push_str(&content);
         let used = visible_width(&content);
@@ -98,11 +223,8 @@ fn draw(lines: &[&str], offset: usize, total: usize, viewport: usize, columns: u
     let percent = if max_offset == 0 { 100 } else { (offset * 100 / max_offset).min(100) };
     let edit_hint = if editable { "e edit  " } else { "" };
     let status = format!(" md  {percent:>3}%  {}/{}   ↑/↓ scroll  space/b page  g/G top/bottom  {edit_hint}q quit", offset + 1, total);
-    let status = if status.len() > columns {
-        status.chars().take(columns).collect::<String>()
-    } else {
-        format!("{status:<columns$}")
-    };
+    let status = truncate_plain(&status, columns);
+    let status = format!("{status:<columns$}");
     screen.push_str("\x1b[7m");
     screen.push_str(&status);
     screen.push_str(RESET);
@@ -136,29 +258,46 @@ fn read_escape(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
     if stdin.read(&mut byte)? == 0 {
         return Ok(None);
     }
-    if byte[0] == b'[' {
-        if stdin.read(&mut byte)? == 0 {
-            return Ok(None);
-        }
-        return Ok(match byte[0] {
-            b'A' => Some(Key::Up),
-            b'B' => Some(Key::Down),
-            b'C' => Some(Key::PageDown),
-            b'D' => Some(Key::PageUp),
-            b'H' => Some(Key::Top),
-            b'F' => Some(Key::Bottom),
-            b'5' => {
-                let _ = stdin.read(&mut byte)?;
-                Some(Key::PageUp)
-            }
-            b'6' => {
-                let _ = stdin.read(&mut byte)?;
-                Some(Key::PageDown)
-            }
-            _ => None,
-        });
+    if byte[0] != b'[' {
+        return Ok(None);
     }
-    Ok(None)
+    if stdin.read(&mut byte)? == 0 {
+        return Ok(None);
+    }
+    if byte[0] == b'<' {
+        let mut sequence = String::new();
+        loop {
+            if stdin.read(&mut byte)? == 0 {
+                return Ok(None);
+            }
+            let character = byte[0] as char;
+            if character == 'M' || character == 'm' {
+                let mut parts = sequence.split(';');
+                let button = parts.next().and_then(|value| value.parse().ok()).unwrap_or(0);
+                let x = parts.next().and_then(|value| value.parse().ok()).unwrap_or(1);
+                let y = parts.next().and_then(|value| value.parse().ok()).unwrap_or(1);
+                return Ok(Some(Key::Mouse(MouseEvent { button: button & 3 | (button & 64), x, y, press: character == 'M', motion: button & 32 != 0 })));
+            }
+            sequence.push(character);
+        }
+    }
+    Ok(match byte[0] {
+        b'A' => Some(Key::Up),
+        b'B' => Some(Key::Down),
+        b'C' => Some(Key::PageDown),
+        b'D' => Some(Key::PageUp),
+        b'H' => Some(Key::Top),
+        b'F' => Some(Key::Bottom),
+        b'5' => {
+            let _ = stdin.read(&mut byte)?;
+            Some(Key::PageUp)
+        }
+        b'6' => {
+            let _ = stdin.read(&mut byte)?;
+            Some(Key::PageDown)
+        }
+        _ => None,
+    })
 }
 
 fn terminal_size() -> Option<(usize, usize)> {
@@ -227,4 +366,8 @@ fn truncate_ansi(text: &str, width: usize) -> String {
     }
     output.push_str(RESET);
     output
+}
+
+fn truncate_plain(text: &str, width: usize) -> String {
+    text.chars().take(width).collect()
 }

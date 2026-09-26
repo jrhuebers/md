@@ -90,6 +90,7 @@ struct Config {
     style: String,
     width: usize,
     render_latex: bool,
+    pager_scroll_speed: usize,
     themes: HashMap<String, Theme>,
 }
 
@@ -98,14 +99,14 @@ impl Config {
         let mut themes = HashMap::new();
         themes.insert("glow-light".to_string(), Theme::glow_light());
         themes.insert("glow-dark".to_string(), Theme::glow_dark());
-        Self { style: "glow-light".to_string(), width: 0, render_latex: true, themes }
+        Self { style: "glow-light".to_string(), width: 0, render_latex: true, pager_scroll_speed: 60, themes }
     }
 
-    fn theme(self) -> io::Result<(Theme, usize, bool)> {
+    fn theme(self) -> io::Result<(Theme, usize, bool, usize)> {
         let theme = self.themes.get(&self.style).cloned().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("unknown md style: {}", self.style))
         })?;
-        Ok((theme, self.width, self.render_latex))
+        Ok((theme, self.width, self.render_latex, self.pager_scroll_speed))
     }
 }
 
@@ -125,7 +126,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (theme, configured_width, render_latex) = config;
+    let (theme, configured_width, render_latex, pager_scroll_speed) = config;
     math::set_enabled(render_latex);
     let width = if configured_width == 0 {
         terminal_columns().unwrap_or(80) as usize
@@ -138,7 +139,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.17");
+        println!("md 0.6.18");
         return;
     }
 
@@ -163,8 +164,11 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let rendered = render_markdown(&input, &theme, width);
-        match page(&rendered, editable_path.as_deref()) {
+        let render_width = if env::var_os("PAGER").is_none() { width.saturating_sub(1) } else { width };
+        let rendered = render_markdown(&input, &theme, render_width);
+        match page(&rendered, editable_path.as_deref(), pager_scroll_speed, |new_width| {
+            render_markdown(&input, &theme, new_width)
+        }) {
             Ok(PageAction::Done) => break,
             Ok(PageAction::Edit) => {
                 if let Some(path) = editable_path.as_deref() {
@@ -221,6 +225,13 @@ fn parse_config(contents: &str) -> io::Result<Config> {
                 config.render_latex = value.trim().parse::<bool>().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "md.yaml render_latex must be true or false")
                 })?;
+            } else if let Some(value) = content.strip_prefix("pager_scroll_speed:") {
+                config.pager_scroll_speed = value.trim().parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_speed must be a positive integer")
+                })?;
+                if config.pager_scroll_speed == 0 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_speed must be a positive integer"));
+                }
             } else if content == "styles:" {
                 in_styles = true;
             }
@@ -1193,9 +1204,12 @@ fn run_editor(path: &Path) -> io::Result<()> {
     }
 }
 
-fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> {
+fn page<F>(rendered: &str, editable_path: Option<&Path>, pager_scroll_speed: usize, rerender: F) -> io::Result<PageAction>
+where
+    F: FnMut(usize) -> String,
+{
     if env::var_os("PAGER").is_none() {
-        return match pager::run(rendered, editable_path.is_some())? {
+        return match pager::run(rendered, editable_path.is_some(), pager_scroll_speed, rerender)? {
             pager::Action::Done => Ok(PageAction::Done),
             pager::Action::Edit => Ok(PageAction::Edit),
         };

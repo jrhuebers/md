@@ -19,9 +19,9 @@ paragraphs, lists, and blockquotes receive a blank line.
 Every heading is followed by one empty line.
 
 Pager mode is always used. With `$PAGER` unset, `md` uses its built-in
-terminal pager with keyboard scrolling, automatic terminal-size tracking, a
-right-side scrollbar, and a position indicator. Set `$PAGER` to use an external
-pager such as `less -R`. There is no mouse handling or separate document TUI. Inline and display math using
+terminal pager with keyboard scrolling, automatic terminal-size tracking, a mouse-steerable right-side scrollbar, and a position
+indicator. Set `$PAGER` to use an external pager such as `less -R`. There is no
+separate document TUI. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
 letters, operators, matrices, and cases. Display math is centered as a single
@@ -51,10 +51,14 @@ Select a style and configure the terminal width in `~/.config/md.yaml`:
 style: glow-dark
 width: 0
 render_latex: true
+pager_scroll_speed: 60
 ```
 
 Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
 `\[...\]` math source uncompiled. The default is `true`.
+`pager_scroll_speed` controls how frequently the built-in pager polls and
+processes queued key events. It defaults to 60 polls per second and does not
+change the distance moved by one `j`/`k` event.
 
 Add or adjust a style block under `styles:` using the color fields and margin
 fields shown in the tracked example.
@@ -90,7 +94,8 @@ printf '# Heading\n\nMarkdown from stdin.\n' | md -
 ```
 
 The built-in pager uses `q` to quit, `j`/`k` or arrow keys to scroll, Space/`b`
-for pages, `g`/`G` for the beginning/end, and `e` to edit a single file. Use
+for pages, `g`/`G` for the beginning/end, mouse-wheel scrolling, scrollbar
+click-and-drag, and `e` to edit a single file. Use
 `PAGER=cat` for a non-interactive smoke test. The command accepts one or more
 Markdown paths; `-` reads standard input.
 

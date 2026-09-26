@@ -4,6 +4,8 @@ style: md-light
 width: 0
 # Translate supported LaTeX math to terminal Unicode.
 render_latex: true
+# Built-in pager input processing frequency in polls per second.
+pager_scroll_speed: 60
 
 styles:
   md-light:

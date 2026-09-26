@@ -21,7 +21,9 @@ more control over math rendering.
   its internal layout.
 - Provides configurable Glow-inspired light and dark styles, colors, margins,
   terminal width, and optional LaTeX conversion.
-- Uses `$PAGER` when set, or `less -R` by default.
+- Uses a built-in terminal pager by default, with keyboard scrolling, an
+  auto-adapting viewport, a scrollbar, and a position indicator. `$PAGER` can
+  override it with an external pager such as `less -R`.
 - Opens directories with an interactive Markdown file picker with paging,
   live file counts, navigation, and editor shortcuts.
 
@@ -59,8 +61,7 @@ See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 
 ## Build and install
 
-The viewer is a single Rust source file and can be built without a Cargo
-project:
+The viewer is a small Rust program and can be built without a Cargo project:
 
 ```sh
 mkdir -p ~/.local/bin

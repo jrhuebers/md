@@ -18,8 +18,10 @@ punctuation at soft line breaks is joined naturally. Block transitions between
 paragraphs, lists, and blockquotes receive a blank line.
 Every heading is followed by one empty line.
 
-Pager mode is always used: `$PAGER`, or `less -R` when `$PAGER` is unset.
-There is no mouse handling or TUI document viewer. Inline and display math using
+Pager mode is always used. With `$PAGER` unset, `md` uses its built-in
+terminal pager with keyboard scrolling, automatic terminal-size tracking, a
+right-side scrollbar, and a position indicator. Set `$PAGER` to use an external
+pager such as `less -R`. There is no mouse handling or separate document TUI. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
 letters, operators, matrices, and cases. Display math is centered as a single
@@ -37,9 +39,9 @@ so both their beginning and filename remain visible. Press `e` to edit the
 selected file, or Enter to open it. The page dots and key hint stay at the
 bottom of the terminal even on a short final page; press `q` to quit.
 
-When viewing a single file in the default `less` pager, press `e` to open the
-file in `$VISUAL`, `$EDITOR`, or `vi`. The document is re-rendered after the
-editor exits. This edit key is available with the default pager only.
+When viewing a single file in the built-in pager, press `e` to open the file
+in `$VISUAL`, `$EDITOR`, or `vi`. The document is re-rendered after the editor
+exits. This shortcut is unavailable when `$PAGER` selects an external pager.
 
 ## Configuration
 
@@ -87,8 +89,10 @@ md .
 printf '# Heading\n\nMarkdown from stdin.\n' | md -
 ```
 
-Use `PAGER=cat` for a non-interactive smoke test. The command accepts one or
-more Markdown paths; `-` reads standard input.
+The built-in pager uses `q` to quit, `j`/`k` or arrow keys to scroll, Space/`b`
+for pages, `g`/`G` for the beginning/end, and `e` to edit a single file. Use
+`PAGER=cat` for a non-interactive smoke test. The command accepts one or more
+Markdown paths; `-` reads standard input.
 
 ## Removal
 

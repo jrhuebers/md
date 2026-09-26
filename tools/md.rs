@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod math;
+mod pager;
 
 // The built-in defaults mirror Glamour's LightStyle and DarkStyle, which Glow uses.
 #[derive(Clone)]
@@ -137,7 +138,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.16");
+        println!("md 0.6.17");
         return;
     }
 
@@ -1193,7 +1194,13 @@ fn run_editor(path: &Path) -> io::Result<()> {
 }
 
 fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> {
-    let use_default_pager = env::var_os("PAGER").is_none();
+    if env::var_os("PAGER").is_none() {
+        return match pager::run(rendered, editable_path.is_some())? {
+            pager::Action::Done => Ok(PageAction::Done),
+            pager::Action::Edit => Ok(PageAction::Edit),
+        };
+    }
+    let use_default_pager = false;
     let keymap = if use_default_pager && editable_path.is_some() {
         Some(write_less_edit_keymap()?)
     } else {

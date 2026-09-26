@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- First built-in pager implementation with automatic terminal-size tracking,
+  keyboard scrolling, a right-side scrollbar, a position indicator, and `e`
+  editing for single files.
+- Inline code spans now wrap at internal spaces while preserving their styling.
+
 ## [0.6.16] - 2026-09-26
 
 ### Added

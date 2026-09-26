@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.4");
+        println!("md 0.6.5");
         return;
     }
 
@@ -425,7 +425,6 @@ fn push_math_display(output: &mut String, opening: &str, closing: &str, source: 
             push_line(output, line, theme);
         }
     }
-    push_line(output, "", theme);
 }
 
 fn flush_paragraph(paragraph: &mut Vec<String>, output: &mut String, theme: &Theme, width: usize) {

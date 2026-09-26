@@ -66,6 +66,7 @@ where
     let mut offset = 0usize;
     let mut dragging: Option<(usize, usize)> = None;
     let mut dirty = true;
+    let mut clear_screen = true;
     let mut last_size: Option<(usize, usize)> = None;
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || input_thread(sender));
@@ -90,8 +91,10 @@ where
                     old_offset.saturating_mul(new_max) / old_max
                 };
                 dirty = true;
+                clear_screen = true;
             } else if old_rows != rows {
                 dirty = true;
+                clear_screen = true;
             }
         }
         last_size = Some((rows, columns));
@@ -99,8 +102,9 @@ where
         let max_offset = total.saturating_sub(viewport);
         offset = offset.min(max_offset);
         if dirty {
-            draw(&lines, offset, total, viewport, columns.max(2), editable);
+            draw(&lines, offset, total, viewport, columns.max(2), editable, clear_screen);
             dirty = false;
+            clear_screen = false;
         }
 
         match receiver.recv_timeout(poll_interval) {
@@ -245,7 +249,7 @@ fn scrollbar_offset(row: usize, viewport: usize, total: usize) -> usize {
     }
 }
 
-fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool) {
+fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, clear_screen: bool) {
     let content_width = columns.saturating_sub(1).max(1);
     let thumb_size = if total <= viewport {
         viewport
@@ -259,7 +263,11 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
         offset * viewport.saturating_sub(thumb_size) / max_offset
     };
 
-    let mut screen = String::from("\x1b[2J\x1b[H");
+    let mut screen = if clear_screen {
+        String::from("\x1b[2J\x1b[H")
+    } else {
+        String::from("\x1b[H")
+    };
     for row in 0..viewport {
         let line = lines.get(offset + row).map(String::as_str).unwrap_or("");
         let content = truncate_ansi(line, content_width);

@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Avoid full-screen clearing during ordinary scrolling, eliminating the
+  associated redraw flicker.
 - Spacing between paragraphs, lists, blockquotes, and headings.
 - Punctuation and inline math split across source soft line breaks.
 

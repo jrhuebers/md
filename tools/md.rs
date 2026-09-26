@@ -142,7 +142,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.37");
+        println!("md 0.6.38");
         return;
     }
 
@@ -167,9 +167,10 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let render_width = if env::var_os("PAGER").is_none() { width.saturating_sub(1) } else { width };
+        let mouse_enabled = pager_mouse && env::var_os("HERDR_ENV").is_none();
+        let render_width = if env::var_os("PAGER").is_none() && mouse_enabled { width.saturating_sub(1) } else { width };
         let rendered = render_document(&input, &theme, render_width, max_line_length);
-        match page(&rendered, editable_path.as_deref(), pager_poll_speed, pager_scroll_step, pager_mouse, |new_width| {
+        match page(&rendered, editable_path.as_deref(), pager_poll_speed, pager_scroll_step, mouse_enabled, |new_width| {
             render_document(&input, &theme, new_width, max_line_length)
         }) {
             Ok(PageAction::Done) => break,
@@ -1297,12 +1298,12 @@ fn run_editor(path: &Path) -> io::Result<()> {
     }
 }
 
-fn page<F>(rendered: &str, editable_path: Option<&Path>, pager_poll_speed: usize, pager_scroll_step: usize, pager_mouse: bool, rerender: F) -> io::Result<PageAction>
+fn page<F>(rendered: &str, editable_path: Option<&Path>, pager_poll_speed: usize, pager_scroll_step: usize, mouse_enabled: bool, rerender: F) -> io::Result<PageAction>
 where
     F: FnMut(usize) -> String,
 {
     if env::var_os("PAGER").is_none() {
-        return match pager::run(rendered, editable_path.is_some(), pager_poll_speed, pager_scroll_step, pager_mouse && env::var_os("HERDR_ENV").is_none(), rerender)? {
+        return match pager::run(rendered, editable_path.is_some(), pager_poll_speed, pager_scroll_step, mouse_enabled, rerender)? {
             pager::Action::Done => Ok(PageAction::Done),
             pager::Action::Edit => Ok(PageAction::Edit),
         };

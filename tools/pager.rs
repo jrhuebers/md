@@ -89,7 +89,8 @@ where
                 let old_viewport = old_rows.saturating_sub(1).max(1);
                 let old_max = total.saturating_sub(old_viewport);
                 let old_offset = offset;
-                rendered = rerender(columns.saturating_sub(1).max(1));
+                let content_width = if mouse_enabled { columns.saturating_sub(1).max(1) } else { columns };
+                rendered = rerender(content_width);
                 lines = collect_lines(&rendered);
                 total = lines.len().max(1);
                 let new_max = total.saturating_sub(viewport);
@@ -110,7 +111,7 @@ where
         let max_offset = total.saturating_sub(viewport);
         offset = offset.min(max_offset);
         if dirty {
-            draw(&lines, offset, total, viewport, columns.max(2), editable, dragging.is_some() || hovered, clear_screen);
+            draw(&lines, offset, total, viewport, columns.max(2), editable, mouse_enabled, dragging.is_some() || hovered, clear_screen);
             dirty = false;
             clear_screen = false;
         }
@@ -272,8 +273,8 @@ fn scrollbar_offset(row: usize, viewport: usize, total: usize) -> usize {
     }
 }
 
-fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, dragging: bool, clear_screen: bool) {
-    let content_width = columns.saturating_sub(1).max(1);
+fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, mouse_enabled: bool, dragging: bool, clear_screen: bool) {
+    let content_width = if mouse_enabled { columns.saturating_sub(1).max(1) } else { columns };
     let thumb_size = if total <= viewport {
         viewport
     } else {
@@ -297,11 +298,13 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
         screen.push_str(&content);
         let used = visible_width(&content);
         screen.push_str(&" ".repeat(content_width.saturating_sub(used)));
-        screen.push_str(if row >= thumb_start && row < thumb_start + thumb_size {
-            if dragging { "\x1b[38;5;234m█\x1b[0m" } else { "\x1b[38;5;234m┃\x1b[0m" }
-        } else {
-            "\x1b[38;5;245m│\x1b[0m"
-        });
+        if mouse_enabled {
+            screen.push_str(if row >= thumb_start && row < thumb_start + thumb_size {
+                if dragging { "\x1b[38;5;234m█\x1b[0m" } else { "\x1b[38;5;234m┃\x1b[0m" }
+            } else {
+                "\x1b[38;5;245m│\x1b[0m"
+            });
+        }
         screen.push('\n');
     }
 

@@ -33,8 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text uses the compact `Space/b page` label again.
 - Disable mouse reporting inside Herdr so multiplexer text selection continues
   to work.
-- Add `pager_mouse`, defaulting to `false`, so mouse capture can remain off
-  while selection and copy behavior is being designed.
+- Add `pager_mouse`, defaulting to `false`, so mouse capture and the scrollbar
+  column can remain off while selection and copy behavior is being designed.
 - Inline code spans now wrap at internal spaces while preserving their styling.
 
 ## [0.6.16] - 2026-09-26

@@ -58,6 +58,7 @@ max_line_length: 100
 render_latex: true
 pager_poll_speed: 60
 pager_scroll_step: 2
+pager_mouse: false
 ```
 
 `render_latex: false` leaves supported math delimiters and source unchanged.
@@ -65,7 +66,8 @@ pager_scroll_step: 2
 terminal is wider; it defaults to 100, while `0` uses the available width.
 `pager_poll_speed` controls how often the built-in pager polls and processes
 queued key events. `pager_scroll_step` controls the number of lines moved by one
-`j`/`k` or arrow event and defaults to 2. Named styles can customize
+`j`/`k` or arrow event and defaults to 2. `pager_mouse` enables mouse wheel and
+scrollbar interaction outside Herdr; it defaults to `false`. Named styles can customize
 foreground/background colors and left/right margins.
 See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 [`docs/md.md`](docs/md.md) for the full configuration and behavior reference.

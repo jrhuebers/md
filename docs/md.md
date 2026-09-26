@@ -57,6 +57,7 @@ max_line_length: 100
 render_latex: true
 pager_poll_speed: 60
 pager_scroll_step: 2
+pager_mouse: false
 ```
 
 Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
@@ -65,7 +66,8 @@ Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
 terminal is wider; it defaults to 100, while `0` follows the available width.
 `pager_poll_speed` controls how frequently the built-in pager polls and processes
 queued key events. `pager_scroll_step` controls the number of lines moved by one
-`j`/`k` or arrow event and defaults to 2.
+`j`/`k` or arrow event and defaults to 2. `pager_mouse` enables mouse wheel and
+scrollbar interaction outside Herdr and defaults to `false`.
 
 Add or adjust a style block under `styles:` using the color fields and margin
 fields shown in the tracked example.

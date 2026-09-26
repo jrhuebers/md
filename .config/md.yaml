@@ -11,6 +11,8 @@ render_latex: true
 pager_poll_speed: 60
 # Lines moved by one j/k or arrow event.
 pager_scroll_step: 2
+# Enable mouse wheel and scrollbar interaction outside Herdr.
+pager_mouse: false
 
 styles:
   md-light:

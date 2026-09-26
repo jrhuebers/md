@@ -63,7 +63,8 @@ The source is [`tools/md.rs`](../tools/md.rs). Math is rendered by the
 vendored MIT-licensed Pi TUI renderer in `vendor/pi-tui/latex.js`, accessed
 through one persistent Node bridge process. Node is therefore required for the
 Pi math path; the Rust fallback remains available if the bridge cannot start.
-The viewer itself builds to a native user-local binary:
+The viewer itself builds to a native user-local binary. Tagged GitHub releases
+also publish a Linux x86_64 archive containing the binary and Pi math assets.
 
 ```sh
 mkdir -p ~/.local/bin

@@ -72,6 +72,26 @@ The Pi-compatible math bridge uses Node.js and the vendored renderer under
 math renderer. The standalone build and installation details are in
 [`docs/md.md`](docs/md.md).
 
+## Binary releases
+
+Tagged releases publish a Linux x86_64 tarball containing the `md` binary, the
+Pi math bridge, its vendored renderer, and an example configuration. To install
+a release manually:
+
+```sh
+version=0.6.16
+archive="md-v${version}-x86_64-unknown-linux-gnu.tar.gz"
+tar -xzf "$archive"
+cd "md-v${version}-x86_64-unknown-linux-gnu"
+install -Dm755 bin/md ~/.local/bin/md
+mkdir -p ~/.local/share/md ~/.config
+cp -a share/md/. ~/.local/share/md/
+ln -sfn ~/.local/share/md/md.yaml ~/.config/md.yaml
+```
+
+Release archives include SHA-256 checksums. The binary release is optional;
+building directly from `tools/md.rs` remains supported.
+
 ## License and attribution
 
 The terminal viewer is maintained in this repository. The vendored Pi TUI

@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: rustc -O -C strip=symbols tools/md.rs -o md
+
+      - name: Package
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          target="md-${VERSION}-x86_64-unknown-linux-gnu"
+          mkdir -p "dist/${target}/bin" "dist/${target}/share/md/tools" "dist/${target}/share/md/vendor/pi-tui"
+          install -m 755 md "dist/${target}/bin/md"
+          install -m 644 tools/pi-math.mjs "dist/${target}/share/md/tools/pi-math.mjs"
+          install -m 644 vendor/pi-tui/latex.js "dist/${target}/share/md/vendor/pi-tui/latex.js"
+          install -m 644 vendor/pi-tui/NOTICE "dist/${target}/share/md/vendor/pi-tui/NOTICE"
+          install -m 644 .config/md.yaml "dist/${target}/share/md/md.yaml"
+          tar -C dist -czf "dist/${target}.tar.gz" "${target}"
+          sha256sum "dist/${target}.tar.gz" > "dist/${target}.tar.gz.sha256"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256

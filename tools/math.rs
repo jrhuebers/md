@@ -66,6 +66,11 @@ fn start_bridge() -> Option<PiBridge> {
             current.is_file().then_some(current)
         })
         .or_else(|| {
+            let executable = env::current_exe().ok()?;
+            let path = executable.parent()?.parent()?.join("share/md/tools/pi-math.mjs");
+            path.is_file().then_some(path)
+        })
+        .or_else(|| {
             let home = env::var_os("HOME")?;
             let path = PathBuf::from(home).join("md/tools/pi-math.mjs");
             path.is_file().then_some(path)

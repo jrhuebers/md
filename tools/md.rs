@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.5");
+        println!("md 0.6.6");
         return;
     }
 
@@ -387,8 +387,8 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             let prefix_width = 2;
             let available = width.saturating_sub(theme.margin_left + theme.margin_right + prefix_width).max(1);
-            for (index, chunk) in wrap_text(content.trim(), available).iter().enumerate() {
-                let prefix = if index == 0 { "│ " } else { "  " };
+            for chunk in wrap_text(content.trim(), available).iter() {
+                let prefix = "│ ";
                 let rendered = format!("{}{}{}{}", fg(theme.normal_fg), DIM, prefix, render_inline(chunk, theme.normal_fg, theme));
                 push_line(&mut output, &format!("{}{}", rendered, RESET), theme);
             }

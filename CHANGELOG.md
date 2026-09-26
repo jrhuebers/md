@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve bold spans containing inline code, including the bold styling after
+  the code span.
 - Join indented continuation lines with their list item instead of inserting
   paragraph breaks inside wrapped list content.
 - Render display-style math delimiters used within list continuations without

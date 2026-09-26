@@ -142,7 +142,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.38");
+        println!("md 0.6.39");
         return;
     }
 
@@ -649,6 +649,16 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
         }
         let glued = !tokens.is_empty() && position == whitespace_start;
         let start = position;
+        if text[position..].starts_with("**") || text[position..].starts_with("__") {
+            let marker = &text[position..position + 2];
+            if let Some(end) = text[position + 2..].find(marker) {
+                position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: word.chars().count().saturating_sub(4), code: false, glued });
+                continue;
+            }
+        }
         if text[position..].starts_with('`') {
             if let Some(end) = text[position + 1..].find('`') {
                 let end = position + 1 + end;
@@ -858,6 +868,10 @@ fn underscore_in_word(input: &str, index: usize) -> bool {
 }
 
 fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
+    render_inline_with_bold(input, base_foreground, theme, false)
+}
+
+fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold_active: bool) -> String {
     let mut output = String::with_capacity(input.len() + 16);
     output.push_str(&fg(base_foreground));
     let mut index = 0;
@@ -881,8 +895,8 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
             let marker = &input[index..index + 2];
             if let Some(end) = input[index + 2..].find(marker) {
                 output.push_str(BOLD);
-                output.push_str(&render_inline(&input[index + 2..index + 2 + end], base_foreground, theme));
-                output.push_str(&restore(base_foreground));
+                output.push_str(&render_inline_with_bold(&input[index + 2..index + 2 + end], base_foreground, theme, true));
+                output.push_str(&restore_inline(base_foreground, bold_active));
                 index += end + 4;
             } else {
                 output.push_str(marker);
@@ -894,7 +908,7 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
             if let Some(end) = input[index + 1..].find('`') {
                 output.push_str(&style(theme.inline_code_fg, Some(theme.inline_code_bg), false, false, false));
                 output.push_str(&input[index + 1..index + 1 + end]);
-                output.push_str(&restore(base_foreground));
+                output.push_str(&restore_inline(base_foreground, bold_active));
                 index += end + 2;
                 continue;
             }
@@ -926,7 +940,7 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
             if let Some(end) = input[index + 1..].find(marker) {
                 output.push_str(ITALIC);
                 output.push_str(&input[index + 1..index + 1 + end]);
-                output.push_str(&restore(base_foreground));
+                output.push_str(&restore_inline(base_foreground, bold_active));
                 index += end + 2;
             } else {
                 output.push_str(marker);
@@ -937,6 +951,14 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
         let character = rest.chars().next().unwrap();
         output.push(character);
         index += character.len_utf8();
+    }
+    output
+}
+
+fn restore_inline(foreground: u8, bold_active: bool) -> String {
+    let mut output = restore(foreground);
+    if bold_active {
+        output.push_str(BOLD);
     }
     output
 }

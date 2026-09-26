@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input polling rather than movement distance.
 - Added `pager_scroll_step`, currently set to 2, for the number of lines moved
   by one `j`/`k` or arrow event.
-- Half-page jumps for PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D.
+- Half-page jumps for PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D; status
+  text now clarifies that Space goes forward and `b` goes backward.
 - Inline code spans now wrap at internal spaces while preserving their styling.
 
 ## [0.6.16] - 2026-09-26

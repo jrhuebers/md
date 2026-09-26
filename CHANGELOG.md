@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the terminal has more horizontal space; the default is 100 columns.
 - Scrollbar dragging now preserves the thumb position on mouse-down and follows
   the pointer's vertical delta until release; track clicks still jump. The
-  hovered thumb is visually expanded and centered in its cell.
+  hovered thumb is visually expanded and centered in its cell; the thumb uses a
+  centered heavy vertical bar rather than a dot.
 
 ### Added
 

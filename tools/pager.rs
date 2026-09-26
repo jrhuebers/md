@@ -291,7 +291,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
         let used = visible_width(&content);
         screen.push_str(&" ".repeat(content_width.saturating_sub(used)));
         screen.push_str(if row >= thumb_start && row < thumb_start + thumb_size {
-            if dragging { "\x1b[7m█\x1b[0m" } else { "\x1b[7m●\x1b[0m" }
+            if dragging { "\x1b[7m█\x1b[0m" } else { "\x1b[7m┃\x1b[0m" }
         } else {
             "\x1b[2m│\x1b[0m"
         });

@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.14");
+        println!("md 0.6.15");
         return;
     }
 
@@ -1126,13 +1126,16 @@ fn run_editor(path: &Path) -> io::Result<()> {
 
 fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> {
     let use_default_pager = env::var_os("PAGER").is_none();
-    let keymap = if use_default_pager && editable_path.is_some() {
+    let use_lessi = use_default_pager && command_available("lessi");
+    let keymap = if use_default_pager && !use_lessi && editable_path.is_some() {
         Some(write_less_edit_keymap()?)
     } else {
         None
     };
     let pager = if let Some(path) = &keymap {
         format!("less -R -k {}", path.display())
+    } else if use_lessi {
+        "lessi -R".to_string()
     } else {
         env::var("PAGER").unwrap_or_else(|_| "less -R".to_string())
     };
@@ -1167,6 +1170,16 @@ fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> 
     } else {
         Err(io::Error::new(io::ErrorKind::Other, format!("pager exited with {status}")))
     }
+}
+
+fn command_available(command: &str) -> bool {
+    if command.contains('/') {
+        return Path::new(command).is_file();
+    }
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path).any(|directory| directory.join(command).is_file())
 }
 
 fn shell_words(input: &str) -> Option<Vec<String>> {

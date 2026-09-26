@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scrollbar dragging now preserves the thumb position on mouse-down and follows
   the pointer's vertical delta until release; track clicks still jump. The
   hovered thumb is visually expanded and centered in its cell; the thumb uses a
-  centered heavy vertical bar rather than a dot, without reverse-video artifacts.
+  centered heavy vertical bar rather than a dot, without reverse-video artifacts;
+  normal and hovered handles use the same dark foreground color.
 
 ### Added
 

@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `max_line_length` to center Markdown in a narrower content column when
   the terminal has more horizontal space; the default is 100 columns.
 - Scrollbar dragging now preserves the thumb position on mouse-down and follows
-  the pointer's vertical delta until release; track clicks still jump.
+  the pointer's vertical delta until release; track clicks still jump. The
+  hovered thumb is visually expanded and centered in its cell.
 
 ### Added
 

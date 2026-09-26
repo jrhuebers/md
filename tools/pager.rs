@@ -42,7 +42,7 @@ struct TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = restore_tty(&self.saved);
-        print!("\x1b[?1006l\x1b[?1002l\x1b[?25h\x1b[?1049l");
+        print!("\x1b[?1006l\x1b[?1003l\x1b[?25h\x1b[?1049l");
         let _ = io::stdout().flush();
     }
 }
@@ -57,7 +57,7 @@ where
         return Err(error);
     }
     let _guard = TerminalGuard { saved };
-    print!("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1002h\x1b[?1006h");
+    print!("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1003h\x1b[?1006h");
     io::stdout().flush()?;
 
     let mut rendered = rendered.to_string();
@@ -65,6 +65,7 @@ where
     let mut total = lines.len().max(1);
     let mut offset = 0usize;
     let mut dragging: Option<(usize, usize)> = None;
+    let mut hovered = false;
     let mut dirty = true;
     let mut clear_screen = true;
     let mut last_size: Option<(usize, usize)> = None;
@@ -102,7 +103,7 @@ where
         let max_offset = total.saturating_sub(viewport);
         offset = offset.min(max_offset);
         if dirty {
-            draw(&lines, offset, total, viewport, columns.max(2), editable, clear_screen);
+            draw(&lines, offset, total, viewport, columns.max(2), editable, dragging.is_some() || hovered, clear_screen);
             dirty = false;
             clear_screen = false;
         }
@@ -151,8 +152,10 @@ where
                 Key::Edit if editable => return Ok(Action::Edit),
                 Key::Edit => {}
                 Key::Mouse(event) => {
-                    let next = handle_mouse(event, columns, viewport, total, offset, &mut dragging);
-                    dirty |= next != offset;
+                    let was_dragging = dragging.is_some();
+                    let was_hovered = hovered;
+                    let next = handle_mouse(event, columns, viewport, total, offset, &mut dragging, &mut hovered);
+                    dirty |= next != offset || was_dragging != dragging.is_some() || was_hovered != hovered;
                     offset = next;
                 }
             },
@@ -178,19 +181,26 @@ fn input_thread(sender: Sender<Key>) {
     }
 }
 
-fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize, offset: usize, dragging: &mut Option<(usize, usize)>) -> usize {
+fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize, offset: usize, dragging: &mut Option<(usize, usize)>, hovered: &mut bool) -> usize {
     if event.button == 64 {
         return offset.saturating_sub(2);
     }
     if event.button == 65 {
         return (offset + 2).min(total.saturating_sub(viewport));
     }
-    if event.button != 0 {
-        return offset;
-    }
     if event.motion {
+        let row = event.y.saturating_sub(1);
+        let (thumb_size, track) = scrollbar_metrics(viewport, total);
+        let thumb_start = if track == 0 {
+            0
+        } else {
+            offset * track / total.saturating_sub(viewport).max(1)
+        };
+        *hovered = event.x >= columns.saturating_sub(1)
+            && row < viewport
+            && row >= thumb_start
+            && row < thumb_start + thumb_size;
         if let Some((start_y, start_offset)) = *dragging {
-            let (_, track) = scrollbar_metrics(viewport, total);
             let max_offset = total.saturating_sub(viewport);
             if track == 0 || max_offset == 0 {
                 return start_offset;
@@ -205,11 +215,15 @@ fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize
         }
         return offset;
     }
+    if event.button != 0 {
+        return offset;
+    }
     if !event.press {
         *dragging = None;
         return offset;
     }
     if event.x < columns.saturating_sub(1) || event.y > viewport {
+        *hovered = false;
         return offset;
     }
 
@@ -224,9 +238,11 @@ fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize
         // Start dragging without changing the scroll position. Subsequent
         // motion is relative to this exact pointer and offset pair.
         *dragging = Some((event.y, offset));
+        *hovered = true;
         return offset;
     }
     *dragging = None;
+    *hovered = false;
     scrollbar_offset(row, viewport, total)
 }
 
@@ -249,7 +265,7 @@ fn scrollbar_offset(row: usize, viewport: usize, total: usize) -> usize {
     }
 }
 
-fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, clear_screen: bool) {
+fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, dragging: bool, clear_screen: bool) {
     let content_width = columns.saturating_sub(1).max(1);
     let thumb_size = if total <= viewport {
         viewport
@@ -275,7 +291,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
         let used = visible_width(&content);
         screen.push_str(&" ".repeat(content_width.saturating_sub(used)));
         screen.push_str(if row >= thumb_start && row < thumb_start + thumb_size {
-            "\x1b[7m▐\x1b[0m"
+            if dragging { "\x1b[7m█\x1b[0m" } else { "\x1b[7m●\x1b[0m" }
         } else {
             "\x1b[2m│\x1b[0m"
         });

@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by one `j`/`k` or arrow event.
 - Half-page jumps for PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D; status
   text now clarifies that Space goes forward and `b` goes backward.
+- Disable mouse reporting inside Herdr so multiplexer text selection continues
+  to work.
 - Inline code spans now wrap at internal spaces while preserving their styling.
 
 ## [0.6.16] - 2026-09-26

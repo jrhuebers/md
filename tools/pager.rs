@@ -37,17 +37,21 @@ struct MouseEvent {
 
 struct TerminalGuard {
     saved: String,
+    mouse_enabled: bool,
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = restore_tty(&self.saved);
-        print!("\x1b[?1006l\x1b[?1003l\x1b[?25h\x1b[?1049l");
+        if self.mouse_enabled {
+            print!("\x1b[?1006l\x1b[?1003l");
+        }
+        print!("\x1b[?25h\x1b[?1049l");
         let _ = io::stdout().flush();
     }
 }
 
-pub fn run<F>(rendered: &str, editable: bool, poll_speed: usize, scroll_step: usize, mut rerender: F) -> io::Result<Action>
+pub fn run<F>(rendered: &str, editable: bool, poll_speed: usize, scroll_step: usize, mouse_enabled: bool, mut rerender: F) -> io::Result<Action>
 where
     F: FnMut(usize) -> String,
 {
@@ -56,8 +60,11 @@ where
         let _ = restore_tty(&saved);
         return Err(error);
     }
-    let _guard = TerminalGuard { saved };
-    print!("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1003h\x1b[?1006h");
+    let _guard = TerminalGuard { saved, mouse_enabled };
+    print!("\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l");
+    if mouse_enabled {
+        print!("\x1b[?1003h\x1b[?1006h");
+    }
     io::stdout().flush()?;
 
     let mut rendered = rendered.to_string();

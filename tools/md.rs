@@ -141,7 +141,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.32");
+        println!("md 0.6.33");
         return;
     }
 
@@ -1244,7 +1244,7 @@ where
     F: FnMut(usize) -> String,
 {
     if env::var_os("PAGER").is_none() {
-        return match pager::run(rendered, editable_path.is_some(), pager_poll_speed, pager_scroll_step, rerender)? {
+        return match pager::run(rendered, editable_path.is_some(), pager_poll_speed, pager_scroll_step, env::var_os("HERDR_ENV").is_none(), rerender)? {
             pager::Action::Done => Ok(PageAction::Done),
             pager::Action::Edit => Ok(PageAction::Edit),
         };

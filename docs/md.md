@@ -20,9 +20,11 @@ Every heading is followed by one empty line. Rendered documents also have
 exactly one blank line at the beginning and end.
 
 Pager mode is always used. With `$PAGER` unset, `md` uses its built-in
-terminal pager with keyboard scrolling, automatic terminal-size tracking, a mouse-steerable right-side scrollbar, and a position
-indicator. Set `$PAGER` to use an external pager such as `less -R`. There is no
-separate document TUI. Inline and display math using
+terminal pager with keyboard scrolling, automatic terminal-size tracking, and
+a mouse-steerable right-side scrollbar. Mouse reporting is automatically
+disabled inside Herdr so the multiplexer can continue handling text selection.
+Set `$PAGER` to use an external pager such as `less -R`. There is no separate
+document TUI. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
 letters, operators, matrices, and cases. Display math is centered as a single
@@ -100,7 +102,7 @@ printf '# Heading\n\nMarkdown from stdin.\n' | md -
 
 The built-in pager uses `q` to quit, `j`/`k` or arrow keys to scroll,
 PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D for half-page jumps, Space for the next page and `b` for the previous page, `g`/`G` for the beginning/end, mouse-wheel scrolling,
-scrollbar click-and-drag, and `e` to edit a single file. Use
+scrollbar click-and-drag outside Herdr, and `e` to edit a single file. Use
 `PAGER=cat` for a non-interactive smoke test. The command accepts one or more
 Markdown paths; `-` reads standard input.
 

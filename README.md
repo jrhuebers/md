@@ -55,14 +55,16 @@ style: glow-dark
 width: 0
 max_line_length: 100
 render_latex: true
-pager_scroll_speed: 60
+pager_poll_speed: 60
+pager_scroll_step: 2
 ```
 
 `render_latex: false` leaves supported math delimiters and source unchanged.
 `max_line_length` limits the Markdown content column and centers it when the
-terminal is wider; it defaults to 100, while `0` uses the available width. `pager_scroll_speed` controls
-how often the built-in pager polls and processes queued key events; it does not
-change the distance moved by one `j`/`k` event. Named styles can customize
+terminal is wider; it defaults to 100, while `0` uses the available width.
+`pager_poll_speed` controls how often the built-in pager polls and processes
+queued key events. `pager_scroll_step` controls the number of lines moved by one
+`j`/`k` or arrow event and defaults to 2. Named styles can customize
 foreground/background colors and left/right margins.
 See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 [`docs/md.md`](docs/md.md) for the full configuration and behavior reference.

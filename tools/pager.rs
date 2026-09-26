@@ -47,7 +47,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run<F>(rendered: &str, editable: bool, scroll_speed: usize, mut rerender: F) -> io::Result<Action>
+pub fn run<F>(rendered: &str, editable: bool, poll_speed: usize, scroll_step: usize, mut rerender: F) -> io::Result<Action>
 where
     F: FnMut(usize) -> String,
 {
@@ -69,7 +69,8 @@ where
     let mut last_size: Option<(usize, usize)> = None;
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || input_thread(sender));
-    let poll_interval = Duration::from_millis((1000 / scroll_speed.max(1)) as u64);
+    let poll_interval = Duration::from_millis((1000 / poll_speed.max(1)) as u64);
+    let scroll_step = scroll_step.max(1);
 
     loop {
         let (rows, columns) = terminal_size().unwrap_or((24, 80));
@@ -105,12 +106,12 @@ where
         match receiver.recv_timeout(poll_interval) {
             Ok(key) => match key {
                 Key::Up => {
-                    let next = offset.saturating_sub(1);
+                    let next = offset.saturating_sub(scroll_step);
                     dirty |= next != offset;
                     offset = next;
                 }
                 Key::Down => {
-                    let next = (offset + 1).min(max_offset);
+                    let next = (offset + scroll_step).min(max_offset);
                     dirty |= next != offset;
                     offset = next;
                 }

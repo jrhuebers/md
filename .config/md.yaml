@@ -8,7 +8,9 @@ max_line_length: 100
 # Translate supported LaTeX math to terminal Unicode.
 render_latex: true
 # Built-in pager input processing frequency in polls per second.
-pager_scroll_speed: 60
+pager_poll_speed: 60
+# Lines moved by one j/k or arrow event.
+pager_scroll_step: 2
 
 styles:
   md-light:

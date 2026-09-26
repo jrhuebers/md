@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - First built-in pager implementation with automatic terminal-size tracking,
   keyboard scrolling, a mouse-steerable right-side scrollbar, a position
   indicator, and `e` editing for single files.
-- Configurable `pager_scroll_speed` for controlling how frequently queued input
-  events are processed.
+- Renamed `pager_scroll_speed` to `pager_poll_speed` to reflect that it controls
+  input polling rather than movement distance.
+- Added `pager_scroll_step`, currently set to 2, for the number of lines moved
+  by one `j`/`k` or arrow event.
 - Half-page jumps for PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D.
 - Inline code spans now wrap at internal spaces while preserving their styling.
 

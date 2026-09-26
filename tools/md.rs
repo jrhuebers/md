@@ -91,7 +91,8 @@ struct Config {
     width: usize,
     max_line_length: usize,
     render_latex: bool,
-    pager_scroll_speed: usize,
+    pager_poll_speed: usize,
+    pager_scroll_step: usize,
     themes: HashMap<String, Theme>,
 }
 
@@ -100,14 +101,14 @@ impl Config {
         let mut themes = HashMap::new();
         themes.insert("glow-light".to_string(), Theme::glow_light());
         themes.insert("glow-dark".to_string(), Theme::glow_dark());
-        Self { style: "glow-light".to_string(), width: 0, max_line_length: 100, render_latex: true, pager_scroll_speed: 60, themes }
+        Self { style: "glow-light".to_string(), width: 0, max_line_length: 100, render_latex: true, pager_poll_speed: 60, pager_scroll_step: 2, themes }
     }
 
-    fn theme(self) -> io::Result<(Theme, usize, usize, bool, usize)> {
+    fn theme(self) -> io::Result<(Theme, usize, usize, bool, usize, usize)> {
         let theme = self.themes.get(&self.style).cloned().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("unknown md style: {}", self.style))
         })?;
-        Ok((theme, self.width, self.max_line_length, self.render_latex, self.pager_scroll_speed))
+        Ok((theme, self.width, self.max_line_length, self.render_latex, self.pager_poll_speed, self.pager_scroll_step))
     }
 }
 
@@ -127,7 +128,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (theme, configured_width, max_line_length, render_latex, pager_scroll_speed) = config;
+    let (theme, configured_width, max_line_length, render_latex, pager_poll_speed, pager_scroll_step) = config;
     math::set_enabled(render_latex);
     let width = if configured_width == 0 {
         terminal_columns().unwrap_or(80) as usize
@@ -140,7 +141,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.23");
+        println!("md 0.6.24");
         return;
     }
 
@@ -167,7 +168,7 @@ fn main() {
         };
         let render_width = if env::var_os("PAGER").is_none() { width.saturating_sub(1) } else { width };
         let rendered = render_document(&input, &theme, render_width, max_line_length);
-        match page(&rendered, editable_path.as_deref(), pager_scroll_speed, |new_width| {
+        match page(&rendered, editable_path.as_deref(), pager_poll_speed, pager_scroll_step, |new_width| {
             render_document(&input, &theme, new_width, max_line_length)
         }) {
             Ok(PageAction::Done) => break,
@@ -230,12 +231,19 @@ fn parse_config(contents: &str) -> io::Result<Config> {
                 config.render_latex = value.trim().parse::<bool>().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "md.yaml render_latex must be true or false")
                 })?;
-            } else if let Some(value) = content.strip_prefix("pager_scroll_speed:") {
-                config.pager_scroll_speed = value.trim().parse::<usize>().map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_speed must be a positive integer")
+            } else if let Some(value) = content.strip_prefix("pager_poll_speed:") {
+                config.pager_poll_speed = value.trim().parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_poll_speed must be a positive integer")
                 })?;
-                if config.pager_scroll_speed == 0 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_speed must be a positive integer"));
+                if config.pager_poll_speed == 0 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_poll_speed must be a positive integer"));
+                }
+            } else if let Some(value) = content.strip_prefix("pager_scroll_step:") {
+                config.pager_scroll_step = value.trim().parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_step must be a positive integer")
+                })?;
+                if config.pager_scroll_step == 0 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_step must be a positive integer"));
                 }
             } else if content == "styles:" {
                 in_styles = true;
@@ -1231,12 +1239,12 @@ fn run_editor(path: &Path) -> io::Result<()> {
     }
 }
 
-fn page<F>(rendered: &str, editable_path: Option<&Path>, pager_scroll_speed: usize, rerender: F) -> io::Result<PageAction>
+fn page<F>(rendered: &str, editable_path: Option<&Path>, pager_poll_speed: usize, pager_scroll_step: usize, rerender: F) -> io::Result<PageAction>
 where
     F: FnMut(usize) -> String,
 {
     if env::var_os("PAGER").is_none() {
-        return match pager::run(rendered, editable_path.is_some(), pager_scroll_speed, rerender)? {
+        return match pager::run(rendered, editable_path.is_some(), pager_poll_speed, pager_scroll_step, rerender)? {
             pager::Action::Done => Ok(PageAction::Done),
             pager::Action::Edit => Ok(PageAction::Edit),
         };

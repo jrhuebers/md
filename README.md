@@ -23,7 +23,9 @@ more control over math rendering.
   terminal width, and optional LaTeX conversion.
 - Uses a built-in terminal pager by default, with keyboard scrolling, an
   auto-adapting viewport, a mouse-steerable scrollbar, and a position
-  indicator. `$PAGER` can override it with an external pager such as `less -R`.
+  indicator. PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D make half-page jumps;
+  Space/`b` make full-page jumps. `$PAGER` can override it with an external
+  pager such as `less -R`.
 - Opens directories with an interactive Markdown file picker with paging,
   live file counts, navigation, and editor shortcuts.
 

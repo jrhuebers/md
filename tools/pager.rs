@@ -17,6 +17,8 @@ enum Key {
     Down,
     PageUp,
     PageDown,
+    HalfPageUp,
+    HalfPageDown,
     Top,
     Bottom,
     Quit,
@@ -122,8 +124,24 @@ where
                     dirty |= next != offset;
                     offset = next;
                 }
-                Key::Top => dirty |= offset != 0,
-                Key::Bottom => dirty |= offset != max_offset,
+                Key::HalfPageUp => {
+                    let next = offset.saturating_sub((viewport / 2).max(1));
+                    dirty |= next != offset;
+                    offset = next;
+                }
+                Key::HalfPageDown => {
+                    let next = (offset + (viewport / 2).max(1)).min(max_offset);
+                    dirty |= next != offset;
+                    offset = next;
+                }
+                Key::Top => {
+                    dirty |= offset != 0;
+                    offset = 0;
+                }
+                Key::Bottom => {
+                    dirty |= offset != max_offset;
+                    offset = max_offset;
+                }
                 Key::Quit => return Ok(Action::Done),
                 Key::Edit if editable => return Ok(Action::Edit),
                 Key::Edit => {}
@@ -222,7 +240,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
 
     let percent = if max_offset == 0 { 100 } else { (offset * 100 / max_offset).min(100) };
     let edit_hint = if editable { "e edit  " } else { "" };
-    let status = format!(" md  {percent:>3}%  {}/{}   ↑/↓ scroll  space/b page  g/G top/bottom  {edit_hint}q quit", offset + 1, total);
+    let status = format!(" md  {percent:>3}%  {}/{}   ↑/↓ line  PgUp/PgDn/u/d half  space/b page  g/G top/bottom  {edit_hint}q quit", offset + 1, total);
     let status = truncate_plain(&status, columns);
     let status = format!("{status:<columns$}");
     screen.push_str("\x1b[7m");
@@ -244,9 +262,10 @@ fn read_key(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
         b'j' | b'\n' | b'\r' => Some(Key::Down),
         b'b' | 2 => Some(Key::PageUp),
         b' ' | 6 => Some(Key::PageDown),
+        b'u' | 21 => Some(Key::HalfPageUp),
+        b'd' | 4 => Some(Key::HalfPageDown),
         b'g' => Some(Key::Top),
         b'G' => Some(Key::Bottom),
-        21 => Some(Key::PageUp),
         27 => read_escape(stdin)?,
         _ => None,
     };
@@ -290,11 +309,11 @@ fn read_escape(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
         b'F' => Some(Key::Bottom),
         b'5' => {
             let _ = stdin.read(&mut byte)?;
-            Some(Key::PageUp)
+            Some(Key::HalfPageUp)
         }
         b'6' => {
             let _ = stdin.read(&mut byte)?;
-            Some(Key::PageDown)
+            Some(Key::HalfPageDown)
         }
         _ => None,
     })

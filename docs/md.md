@@ -94,9 +94,10 @@ md .
 printf '# Heading\n\nMarkdown from stdin.\n' | md -
 ```
 
-The built-in pager uses `q` to quit, `j`/`k` or arrow keys to scroll, Space/`b`
-for pages, `g`/`G` for the beginning/end, mouse-wheel scrolling, scrollbar
-click-and-drag, and `e` to edit a single file. Use
+The built-in pager uses `q` to quit, `j`/`k` or arrow keys to scroll,
+PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D for half-page jumps, Space/`b` for
+full-page jumps, `g`/`G` for the beginning/end, mouse-wheel scrolling,
+scrollbar click-and-drag, and `e` to edit a single file. Use
 `PAGER=cat` for a non-interactive smoke test. The command accepts one or more
 Markdown paths; `-` reads standard input.
 

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indicator, and `e` editing for single files.
 - Configurable `pager_scroll_speed` for controlling how frequently queued input
   events are processed.
+- Half-page jumps for PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D.
 - Inline code spans now wrap at internal spaces while preserving their styling.
 
 ## [0.6.16] - 2026-09-26

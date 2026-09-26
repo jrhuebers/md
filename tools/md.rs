@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.12");
+        println!("md 0.6.13");
         return;
     }
 
@@ -285,11 +285,18 @@ fn read_input(paths: &[String]) -> io::Result<String> {
     Ok(combined)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlockKind {
+    List,
+    Quote,
+}
+
 fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut output = String::with_capacity(input.len() + input.len() / 8);
     let mut paragraph: Vec<String> = Vec::new();
     let mut in_code = false;
     let mut math_block: Option<(String, String, String)> = None;
+    let mut previous_block: Option<BlockKind> = None;
     let mut suppress_blank = false;
 
     for raw_line in input.lines() {
@@ -297,11 +304,13 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
         let trimmed = line.trim_start();
 
         if is_fence(trimmed) {
+            previous_block = None;
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             in_code = !in_code;
             continue;
         }
         if in_code {
+            previous_block = None;
             let mut rendered = String::from("  ");
             rendered.push_str(&fg(theme.code_block_fg));
             rendered.push_str(line);
@@ -310,6 +319,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
         if let Some((_, closing, _)) = math_block.as_ref() {
+            previous_block = None;
             let closing = closing.clone();
             if let Some(end) = line.find(closing.as_str()) {
                 if let Some((opening, _, mut body)) = math_block.take() {
@@ -325,6 +335,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
         if line.trim().is_empty() {
+            previous_block = None;
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             if suppress_blank {
                 suppress_blank = false;
@@ -335,6 +346,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
         }
         suppress_blank = false;
         if let Some((opening, closing)) = display_math_delimiter(trimmed) {
+            previous_block = None;
             let body_start = opening.len();
             let rest = &trimmed[body_start..];
             flush_paragraph(&mut paragraph, &mut output, theme, width);
@@ -346,6 +358,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
         if let Some((level, heading)) = heading(trimmed) {
+            previous_block = None;
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             ensure_blank_line(&mut output, theme);
             let mut rendered = if level == 1 {
@@ -371,13 +384,20 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
         if is_rule(trimmed) {
+            previous_block = None;
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             let rendered = format!("{}────────────────────────────────────────{}", fg(theme.rule_fg), RESET);
             push_line(&mut output, &rendered, theme);
             continue;
         }
         if let Some((depth, marker, content)) = list_item(line) {
-            flush_paragraph(&mut paragraph, &mut output, theme, width);
+            if previous_block != Some(BlockKind::List) {
+                flush_paragraph(&mut paragraph, &mut output, theme, width);
+                ensure_blank_line(&mut output, theme);
+            } else {
+                flush_paragraph(&mut paragraph, &mut output, theme, width);
+            }
+            previous_block = Some(BlockKind::List);
             let prefix = format!("{}{}", "  ".repeat(depth), marker);
             let prefix_width = prefix.chars().count();
             let available = width.saturating_sub(theme.margin_left + theme.margin_right + prefix_width).max(1);
@@ -393,7 +413,13 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
         if let Some(content) = trimmed.strip_prefix("> ").or_else(|| trimmed.strip_prefix('>')) {
-            flush_paragraph(&mut paragraph, &mut output, theme, width);
+            if previous_block != Some(BlockKind::Quote) {
+                flush_paragraph(&mut paragraph, &mut output, theme, width);
+                ensure_blank_line(&mut output, theme);
+            } else {
+                flush_paragraph(&mut paragraph, &mut output, theme, width);
+            }
+            previous_block = Some(BlockKind::Quote);
             let prefix_width = 2;
             let available = width.saturating_sub(theme.margin_left + theme.margin_right + prefix_width).max(1);
             for chunk in wrap_text(content.trim(), available).iter() {
@@ -402,6 +428,10 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
                 push_line(&mut output, &format!("{}{}", rendered, RESET), theme);
             }
             continue;
+        }
+        if previous_block.is_some() {
+            ensure_blank_line(&mut output, theme);
+            previous_block = None;
         }
         paragraph.push(line.trim().to_string());
     }

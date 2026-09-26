@@ -293,7 +293,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
         screen.push_str(if row >= thumb_start && row < thumb_start + thumb_size {
             if dragging { "\x1b[38;5;234m█\x1b[0m" } else { "\x1b[38;5;234m┃\x1b[0m" }
         } else {
-            "\x1b[38;5;250m│\x1b[0m"
+            "\x1b[38;5;245m│\x1b[0m"
         });
         screen.push('\n');
     }

@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the pointer's vertical delta until release; track clicks still jump. The
   hovered thumb is visually expanded and centered in its cell; the thumb uses a
   centered heavy vertical bar rather than a dot, without reverse-video artifacts;
-  normal and hovered handles use the same dark foreground color.
+  normal and hovered handles use the same dark foreground color, while the
+  thin track line uses a lighter gray.
 
 ### Added
 

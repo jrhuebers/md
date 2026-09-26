@@ -2,6 +2,8 @@
 style: md-light
 # 0 follows the terminal width; a positive value overrides it.
 width: 0
+# Translate supported LaTeX math to terminal Unicode.
+render_latex: true
 
 styles:
   md-light:

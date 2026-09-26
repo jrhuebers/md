@@ -5,7 +5,7 @@ use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{atomic::{AtomicBool, Ordering}, Mutex, OnceLock};
 
 struct PiBridge {
     _child: Child,
@@ -14,12 +14,27 @@ struct PiBridge {
 }
 
 static PI_BRIDGE: OnceLock<Mutex<Option<PiBridge>>> = OnceLock::new();
+static RENDER_LATEX: AtomicBool = AtomicBool::new(true);
+
+pub fn set_enabled(enabled: bool) {
+    RENDER_LATEX.store(enabled, Ordering::Relaxed);
+}
+
+pub fn enabled() -> bool {
+    RENDER_LATEX.load(Ordering::Relaxed)
+}
 
 pub fn render_inline(source: &str) -> String {
+    if !enabled() {
+        return source.to_string();
+    }
     pi_render(source, false).unwrap_or_else(|| render_inline_fallback(source))
 }
 
 pub fn render_display(source: &str) -> Vec<String> {
+    if !enabled() {
+        return vec![source.to_string()];
+    }
     if let Some(rendered) = pi_render(source, true) {
         return rendered.lines().map(ToOwned::to_owned).collect();
     }

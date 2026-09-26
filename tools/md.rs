@@ -88,6 +88,7 @@ impl Theme {
 struct Config {
     style: String,
     width: usize,
+    render_latex: bool,
     themes: HashMap<String, Theme>,
 }
 
@@ -96,14 +97,14 @@ impl Config {
         let mut themes = HashMap::new();
         themes.insert("glow-light".to_string(), Theme::glow_light());
         themes.insert("glow-dark".to_string(), Theme::glow_dark());
-        Self { style: "glow-light".to_string(), width: 0, themes }
+        Self { style: "glow-light".to_string(), width: 0, render_latex: true, themes }
     }
 
-    fn theme(self) -> io::Result<(Theme, usize)> {
+    fn theme(self) -> io::Result<(Theme, usize, bool)> {
         let theme = self.themes.get(&self.style).cloned().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("unknown md style: {}", self.style))
         })?;
-        Ok((theme, self.width))
+        Ok((theme, self.width, self.render_latex))
     }
 }
 
@@ -123,7 +124,8 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (theme, configured_width) = config;
+    let (theme, configured_width, render_latex) = config;
+    math::set_enabled(render_latex);
     let width = if configured_width == 0 {
         terminal_columns().unwrap_or(80) as usize
     } else {
@@ -135,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.3");
+        println!("md 0.6.4");
         return;
     }
 
@@ -214,6 +216,10 @@ fn parse_config(contents: &str) -> io::Result<Config> {
                 config.width = value.trim().parse().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "md.yaml width must be an integer")
                 })?;
+            } else if let Some(value) = content.strip_prefix("render_latex:") {
+                config.render_latex = value.trim().parse::<bool>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml render_latex must be true or false")
+                })?;
             } else if content == "styles:" {
                 in_styles = true;
             }
@@ -274,7 +280,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut output = String::with_capacity(input.len() + input.len() / 8);
     let mut paragraph: Vec<String> = Vec::new();
     let mut in_code = false;
-    let mut math_block: Option<(String, String)> = None;
+    let mut math_block: Option<(String, String, String)> = None;
     let mut suppress_blank = false;
 
     for raw_line in input.lines() {
@@ -294,12 +300,14 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             push_line(&mut output, &rendered, theme);
             continue;
         }
-        if let Some((closing, body)) = math_block.as_mut() {
+        if let Some((_, closing, _)) = math_block.as_ref() {
+            let closing = closing.clone();
             if let Some(end) = line.find(closing.as_str()) {
-                body.push_str(&line[..end]);
-                let (_, body) = math_block.take().expect("math block exists");
-                push_math_display(&mut output, &body, theme);
-            } else {
+                if let Some((opening, _, mut body)) = math_block.take() {
+                    body.push_str(&line[..end]);
+                    push_math_display(&mut output, &opening, &closing, &body, theme);
+                }
+            } else if let Some((_, _, body)) = math_block.as_mut() {
                 if !body.is_empty() {
                     body.push('\n');
                 }
@@ -322,9 +330,9 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             let rest = &trimmed[body_start..];
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             if let Some(end) = rest.find(closing) {
-                push_math_display(&mut output, &rest[..end], theme);
+                push_math_display(&mut output, opening, closing, &rest[..end], theme);
             } else {
-                math_block = Some((closing.to_string(), rest.to_string()));
+                math_block = Some((opening.to_string(), closing.to_string(), rest.to_string()));
             }
             continue;
         }
@@ -390,8 +398,8 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     }
 
     flush_paragraph(&mut paragraph, &mut output, theme, width);
-    if let Some((_, body)) = math_block {
-        push_math_display(&mut output, &body, theme);
+    if let Some((opening, closing, body)) = math_block {
+        push_math_display(&mut output, &opening, &closing, &body, theme);
     }
     output
 }
@@ -406,10 +414,16 @@ fn display_math_delimiter(line: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn push_math_display(output: &mut String, source: &str, theme: &Theme) {
-    for line in math::render_display(source) {
-        let rendered = format!("{}{}{}", fg(theme.normal_fg), line, RESET);
-        push_line(output, &rendered, theme);
+fn push_math_display(output: &mut String, opening: &str, closing: &str, source: &str, theme: &Theme) {
+    if math::enabled() {
+        for line in math::render_display(source) {
+            let rendered = format!("{}{}{}", fg(theme.normal_fg), line, RESET);
+            push_line(output, &rendered, theme);
+        }
+    } else {
+        for line in format!("{opening}{source}{closing}").lines() {
+            push_line(output, line, theme);
+        }
     }
     push_line(output, "", theme);
 }
@@ -555,7 +569,11 @@ fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
     while index < input.len() {
         let rest = &input[index..];
         if let Some((source, consumed)) = inline_math_at(input, index) {
-            output.push_str(&math::render_inline(source));
+            if math::enabled() {
+                output.push_str(&math::render_inline(source));
+            } else {
+                output.push_str(&input[index..index + consumed]);
+            }
             index += consumed;
             continue;
         }

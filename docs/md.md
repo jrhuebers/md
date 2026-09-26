@@ -43,7 +43,11 @@ Select a style and configure the terminal width in `~/.config/md.yaml`:
 ```yaml
 style: glow-dark
 width: 0
+render_latex: true
 ```
+
+Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
+`\[...\]` math source uncompiled. The default is `true`.
 
 Add or adjust a style block under `styles:` using the color fields and margin
 fields shown in the tracked example.

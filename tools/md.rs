@@ -142,7 +142,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.39");
+        println!("md 0.6.40");
         return;
     }
 

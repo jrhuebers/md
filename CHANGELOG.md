@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.40] - 2026-09-26
+
 ### Fixed
 
 - Keep inline code styled when its opening backtick follows punctuation and the span wraps across lines (for example, ``(`git rev-parse HEAD`)``).
@@ -78,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spacing between paragraphs, lists, blockquotes, and headings.
 - Punctuation and inline math split across source soft line breaks.
 
-[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.39...HEAD
+[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.40...HEAD
+[0.6.40]: https://github.com/jrhuebers/md/compare/v0.6.39...v0.6.40
 [0.6.39]: https://github.com/jrhuebers/md/compare/v0.6.16...v0.6.39
 [0.6.16]: https://github.com/jrhuebers/md/releases/tag/v0.6.16

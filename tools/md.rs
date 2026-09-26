@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.11");
+        println!("md 0.6.12");
         return;
     }
 
@@ -162,7 +162,16 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let rendered = render_markdown(&input, &theme, width);
+        let render_theme = if env::var_os("PAGER").is_none() {
+            let mut theme = theme.clone();
+            // less -J supplies the one-column left status gutter.
+            theme.margin_left = 0;
+            theme
+        } else {
+            theme.clone()
+        };
+        let render_width = if env::var_os("PAGER").is_none() { width.saturating_sub(1) } else { width };
+        let rendered = render_markdown(&input, &render_theme, render_width);
         match page(&rendered, editable_path.as_deref()) {
             Ok(PageAction::Done) => break,
             Ok(PageAction::Edit) => {
@@ -1102,9 +1111,9 @@ fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> 
         None
     };
     let pager = if let Some(path) = &keymap {
-        format!("less -R -J -k {}", path.display())
+        format!("less -R -J --status-col-width=1 -k {}", path.display())
     } else {
-        env::var("PAGER").unwrap_or_else(|_| "less -R -J".to_string())
+        env::var("PAGER").unwrap_or_else(|_| "less -R -J --status-col-width=1".to_string())
     };
     let words = shell_words(&pager).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid PAGER"))?;
     if words.is_empty() {

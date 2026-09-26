@@ -53,14 +53,14 @@ Configuration normally lives at `~/.config/md.yaml`:
 ```yaml
 style: glow-dark
 width: 0
-max_line_length: 0
+max_line_length: 100
 render_latex: true
 pager_scroll_speed: 60
 ```
 
 `render_latex: false` leaves supported math delimiters and source unchanged.
 `max_line_length` limits the Markdown content column and centers it when the
-terminal is wider; `0` uses the available width. `pager_scroll_speed` controls
+terminal is wider; it defaults to 100, while `0` uses the available width. `pager_scroll_speed` controls
 how often the built-in pager polls and processes queued key events; it does not
 change the distance moved by one `j`/`k` event. Named styles can customize
 foreground/background colors and left/right margins.

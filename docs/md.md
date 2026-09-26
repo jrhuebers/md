@@ -51,7 +51,7 @@ Select a style and configure the terminal width in `~/.config/md.yaml`:
 ```yaml
 style: glow-dark
 width: 0
-max_line_length: 0
+max_line_length: 100
 render_latex: true
 pager_scroll_speed: 60
 ```
@@ -59,7 +59,7 @@ pager_scroll_speed: 60
 Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
 `\[...\]` math source uncompiled. The default is `true`.
 `max_line_length` limits the Markdown content column and centers it when the
-terminal is wider; `0` follows the available width. `pager_scroll_speed` controls
+terminal is wider; it defaults to 100, while `0` follows the available width. `pager_scroll_speed` controls
 how frequently the built-in pager polls and processes queued key events. It
 defaults to 60 polls per second and does not change the distance moved by one
 `j`/`k` event.

@@ -100,7 +100,7 @@ impl Config {
         let mut themes = HashMap::new();
         themes.insert("glow-light".to_string(), Theme::glow_light());
         themes.insert("glow-dark".to_string(), Theme::glow_dark());
-        Self { style: "glow-light".to_string(), width: 0, max_line_length: 0, render_latex: true, pager_scroll_speed: 60, themes }
+        Self { style: "glow-light".to_string(), width: 0, max_line_length: 100, render_latex: true, pager_scroll_speed: 60, themes }
     }
 
     fn theme(self) -> io::Result<(Theme, usize, usize, bool, usize)> {
@@ -140,7 +140,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.22");
+        println!("md 0.6.23");
         return;
     }
 

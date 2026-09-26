@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Ensure exactly one blank line of terminal breathing room at the beginning and
   end of rendered documents.
+- Add `max_line_length` to center Markdown in a narrower content column when
+  the terminal has more horizontal space.
 - Scrollbar dragging now preserves the thumb position on mouse-down and follows
   the pointer's vertical delta until release; track clicks still jump.
 

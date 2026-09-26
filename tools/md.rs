@@ -89,6 +89,7 @@ impl Theme {
 struct Config {
     style: String,
     width: usize,
+    max_line_length: usize,
     render_latex: bool,
     pager_scroll_speed: usize,
     themes: HashMap<String, Theme>,
@@ -99,14 +100,14 @@ impl Config {
         let mut themes = HashMap::new();
         themes.insert("glow-light".to_string(), Theme::glow_light());
         themes.insert("glow-dark".to_string(), Theme::glow_dark());
-        Self { style: "glow-light".to_string(), width: 0, render_latex: true, pager_scroll_speed: 60, themes }
+        Self { style: "glow-light".to_string(), width: 0, max_line_length: 0, render_latex: true, pager_scroll_speed: 60, themes }
     }
 
-    fn theme(self) -> io::Result<(Theme, usize, bool, usize)> {
+    fn theme(self) -> io::Result<(Theme, usize, usize, bool, usize)> {
         let theme = self.themes.get(&self.style).cloned().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("unknown md style: {}", self.style))
         })?;
-        Ok((theme, self.width, self.render_latex, self.pager_scroll_speed))
+        Ok((theme, self.width, self.max_line_length, self.render_latex, self.pager_scroll_speed))
     }
 }
 
@@ -126,7 +127,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (theme, configured_width, render_latex, pager_scroll_speed) = config;
+    let (theme, configured_width, max_line_length, render_latex, pager_scroll_speed) = config;
     math::set_enabled(render_latex);
     let width = if configured_width == 0 {
         terminal_columns().unwrap_or(80) as usize
@@ -139,7 +140,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.21");
+        println!("md 0.6.22");
         return;
     }
 
@@ -165,9 +166,9 @@ fn main() {
             }
         };
         let render_width = if env::var_os("PAGER").is_none() { width.saturating_sub(1) } else { width };
-        let rendered = render_markdown(&input, &theme, render_width);
+        let rendered = render_document(&input, &theme, render_width, max_line_length);
         match page(&rendered, editable_path.as_deref(), pager_scroll_speed, |new_width| {
-            render_markdown(&input, &theme, new_width)
+            render_document(&input, &theme, new_width, max_line_length)
         }) {
             Ok(PageAction::Done) => break,
             Ok(PageAction::Edit) => {
@@ -220,6 +221,10 @@ fn parse_config(contents: &str) -> io::Result<Config> {
             } else if let Some(value) = content.strip_prefix("width:") {
                 config.width = value.trim().parse().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "md.yaml width must be an integer")
+                })?;
+            } else if let Some(value) = content.strip_prefix("max_line_length:") {
+                config.max_line_length = value.trim().parse().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml max_line_length must be an integer")
                 })?;
             } else if let Some(value) = content.strip_prefix("render_latex:") {
                 config.render_latex = value.trim().parse::<bool>().map_err(|_| {
@@ -286,6 +291,26 @@ fn read_input(paths: &[String]) -> io::Result<String> {
         }
     }
     Ok(combined)
+}
+
+fn render_document(input: &str, theme: &Theme, terminal_width: usize, max_line_length: usize) -> String {
+    let margin_width = theme.margin_left + theme.margin_right;
+    let available = terminal_width.saturating_sub(margin_width);
+    let column_width = if max_line_length == 0 {
+        available
+    } else {
+        available.min(max_line_length)
+    };
+    let render_width = column_width + margin_width;
+    let rendered = render_markdown(input, theme, render_width);
+    let outer_padding = terminal_width.saturating_sub(render_width) / 2;
+    if outer_padding == 0 {
+        return rendered;
+    }
+    rendered
+        .lines()
+        .map(|line| format!("{}{}{}\n", " ".repeat(outer_padding), line, " ".repeat(outer_padding)))
+        .collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

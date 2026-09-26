@@ -2,6 +2,9 @@
 style: md-light
 # 0 follows the terminal width; a positive value overrides it.
 width: 0
+# 0 follows the available width; a positive value centers a narrower column.
+# This is the Markdown content width, excluding style margins.
+max_line_length: 0
 # Translate supported LaTeX math to terminal Unicode.
 render_latex: true
 # Built-in pager input processing frequency in polls per second.

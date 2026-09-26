@@ -1,0 +1,4 @@
+The file `latex.js` is vendored from `@earendil-works/pi-tui`, version 0.87.1,
+from the Pi coding-agent project. The package is MIT-licensed.
+
+It is used by `tools/pi-math.mjs` for Pi-compatible Unicode terminal math.

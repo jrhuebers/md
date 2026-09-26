@@ -1,10 +1,22 @@
 use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::process::Command;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::Duration;
 
 const RESET: &str = "\x1b[0m";
+
+#[repr(C)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+unsafe extern "C" {
+    fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
+}
 
 pub enum Action {
     Done,
@@ -56,7 +68,7 @@ where
     F: FnMut(usize) -> String,
 {
     let saved = stty(&["-g"])?;
-    if let Err(error) = stty(&["-icanon", "-echo", "min", "0", "time", "1"]) {
+    if let Err(error) = stty(&["-icanon", "-echo", "min", "1", "time", "0"]) {
         let _ = restore_tty(&saved);
         return Err(error);
     }
@@ -344,19 +356,19 @@ fn read_key(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
 
 fn read_escape(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
     let mut byte = [0u8; 1];
-    if stdin.read(&mut byte)? == 0 {
+    if !read_byte_timeout(stdin, &mut byte)? {
         return Ok(None);
     }
     if byte[0] != b'[' {
         return Ok(None);
     }
-    if stdin.read(&mut byte)? == 0 {
+    if !read_byte_timeout(stdin, &mut byte)? {
         return Ok(None);
     }
     if byte[0] == b'<' {
         let mut sequence = String::new();
         loop {
-            if stdin.read(&mut byte)? == 0 {
+            if !read_byte_timeout(stdin, &mut byte)? {
                 return Ok(None);
             }
             let character = byte[0] as char;
@@ -378,15 +390,29 @@ fn read_escape(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
         b'H' => Some(Key::Top),
         b'F' => Some(Key::Bottom),
         b'5' => {
-            let _ = stdin.read(&mut byte)?;
+            let _ = read_byte_timeout(stdin, &mut byte)?;
             Some(Key::HalfPageUp)
         }
         b'6' => {
-            let _ = stdin.read(&mut byte)?;
+            let _ = read_byte_timeout(stdin, &mut byte)?;
             Some(Key::HalfPageDown)
         }
         _ => None,
     })
+}
+
+// VMIN=1 keeps other terminal readers from treating a timeout as EOF.
+// Poll only while completing escape sequences so a lone Escape does not block.
+fn read_byte_timeout(stdin: &mut io::Stdin, byte: &mut [u8; 1]) -> io::Result<bool> {
+    let mut fd = PollFd { fd: stdin.as_raw_fd(), events: 1, revents: 0 };
+    loop {
+        match unsafe { poll(&mut fd, 1, 100) } {
+            0 => return Ok(false),
+            n if n > 0 => return Ok(stdin.read(byte)? != 0),
+            _ if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => continue,
+            _ => return Err(io::Error::last_os_error()),
+        }
+    }
 }
 
 fn terminal_size() -> Option<(usize, usize)> {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the built-in pager's terminal input in blocking mode so a suspended parent terminal application (such as Yazi) does not mistake a timed-out read for EOF after the pager exits. Poll for incomplete escape sequences instead.
+
 ## [0.6.41] - 2026-09-26
 
 ### Added

@@ -17,8 +17,7 @@ Pager mode is always used. With `$PAGER` unset, `md` uses its built-in
 terminal pager with keyboard scrolling, automatic terminal-size tracking, and
 a mouse-steerable right-side scrollbar. Mouse reporting is automatically
 disabled inside Herdr so the multiplexer can continue handling text selection.
-Set `$PAGER` to use an external pager such as `less -R`. There is no separate
-document TUI. Inline and display math using
+Set `$PAGER` to use an external pager such as `less -R`. The built-in pager keeps the terminal in blocking input mode (VMIN=1) so applications that launch it, such as Yazi, do not receive spurious EOF events; it polls with a short timeout only when completing escape sequences. There is no separate document TUI. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
 letters, operators, matrices, and cases. Display math is centered as a single

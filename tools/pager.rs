@@ -64,7 +64,7 @@ where
     let mut lines = collect_lines(&rendered);
     let mut total = lines.len().max(1);
     let mut offset = 0usize;
-    let mut dragging = false;
+    let mut dragging: Option<(usize, usize)> = None;
     let mut dirty = true;
     let mut last_size: Option<(usize, usize)> = None;
     let (sender, receiver) = mpsc::channel();
@@ -173,7 +173,7 @@ fn input_thread(sender: Sender<Key>) {
     }
 }
 
-fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize, offset: usize, dragging: &mut bool) -> usize {
+fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize, offset: usize, dragging: &mut Option<(usize, usize)>) -> usize {
     if event.button == 64 {
         return offset.saturating_sub(2);
     }
@@ -183,26 +183,61 @@ fn handle_mouse(event: MouseEvent, columns: usize, viewport: usize, total: usize
     if event.button != 0 {
         return offset;
     }
-    if event.press && !event.motion && event.x >= columns.saturating_sub(1) && event.y <= viewport {
-        *dragging = true;
-    } else if !event.press {
-        *dragging = false;
+    if event.motion {
+        if let Some((start_y, start_offset)) = *dragging {
+            let (_, track) = scrollbar_metrics(viewport, total);
+            let max_offset = total.saturating_sub(viewport);
+            if track == 0 || max_offset == 0 {
+                return start_offset;
+            }
+            let delta = event.y as isize - start_y as isize;
+            let movement = (delta * max_offset as isize) / track as isize;
+            return if movement < 0 {
+                start_offset.saturating_sub((-movement) as usize)
+            } else {
+                (start_offset + movement as usize).min(max_offset)
+            };
+        }
+        return offset;
     }
-    if *dragging && (event.motion || event.press) {
-        scrollbar_offset(event.y.saturating_sub(1), viewport, total)
+    if !event.press {
+        *dragging = None;
+        return offset;
+    }
+    if event.x < columns.saturating_sub(1) || event.y > viewport {
+        return offset;
+    }
+
+    let row = event.y.saturating_sub(1);
+    let (thumb_size, track) = scrollbar_metrics(viewport, total);
+    let thumb_start = if track == 0 {
+        0
     } else {
-        offset
+        offset * track / total.saturating_sub(viewport).max(1)
+    };
+    if row >= thumb_start && row < thumb_start + thumb_size {
+        // Start dragging without changing the scroll position. Subsequent
+        // motion is relative to this exact pointer and offset pair.
+        *dragging = Some((event.y, offset));
+        return offset;
     }
+    *dragging = None;
+    scrollbar_offset(row, viewport, total)
+}
+
+fn scrollbar_metrics(viewport: usize, total: usize) -> (usize, usize) {
+    let thumb_size = if total <= viewport {
+        viewport
+    } else {
+        (viewport * viewport / total).max(1).min(viewport)
+    };
+    (thumb_size, viewport.saturating_sub(thumb_size))
 }
 
 fn scrollbar_offset(row: usize, viewport: usize, total: usize) -> usize {
     let max_offset = total.saturating_sub(viewport);
-    if max_offset == 0 {
-        return 0;
-    }
-    let thumb_size = (viewport * viewport / total.max(1)).max(1).min(viewport);
-    let track = viewport.saturating_sub(thumb_size);
-    if track == 0 {
+    let (thumb_size, track) = scrollbar_metrics(viewport, total);
+    if max_offset == 0 || track == 0 {
         0
     } else {
         row.saturating_sub(thumb_size / 2).min(track) * max_offset / track

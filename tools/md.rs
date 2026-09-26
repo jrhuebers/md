@@ -141,7 +141,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.34");
+        println!("md 0.6.35");
         return;
     }
 
@@ -301,6 +301,30 @@ fn read_input(paths: &[String]) -> io::Result<String> {
     Ok(combined)
 }
 
+fn normalized_lines(input: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut last_was_list = false;
+    for raw_line in input.lines() {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        let trimmed = line.trim();
+        let is_list = list_item(line).is_some();
+        let is_continuation = last_was_list
+            && !trimmed.is_empty()
+            && line.chars().take_while(|character| character.is_whitespace()).count() >= 2
+            && !is_list;
+        if is_continuation {
+            if let Some(previous) = lines.last_mut() {
+                previous.push(' ');
+                previous.push_str(trimmed);
+            }
+        } else {
+            lines.push(line.to_string());
+        }
+        last_was_list = if trimmed.is_empty() { false } else { is_list || is_continuation };
+    }
+    lines
+}
+
 fn render_document(input: &str, theme: &Theme, terminal_width: usize, max_line_length: usize) -> String {
     let margin_width = theme.margin_left + theme.margin_right;
     let available = terminal_width.saturating_sub(margin_width);
@@ -336,8 +360,8 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut previous_block: Option<BlockKind> = None;
     let mut suppress_blank = false;
 
-    for raw_line in input.lines() {
-        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+    for raw_line in normalized_lines(input) {
+        let line = raw_line.as_str();
         let trimmed = line.trim_start();
 
         if is_fence(trimmed) {

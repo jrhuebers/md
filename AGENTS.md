@@ -22,3 +22,8 @@ ln -sfn ~/md/.config/md.yaml ~/.config/md.yaml
 After source changes, rebuild and run the smoke tests documented in
 [`docs/md.md`](docs/md.md). Keep the standalone repository clean and commit
 intended changes only.
+
+Maintain [`CHANGELOG.md`](CHANGELOG.md) using the Keep a Changelog structure:
+keep an `Unreleased` section at the top, group notable user-facing changes by
+`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`, and move
+those entries into a dated version section when publishing a release.

@@ -29,6 +29,8 @@ more control over math rendering.
 GFM implementation. It has no mouse-driven document UI and does not require
 Glow.
 
+See [`CHANGELOG.md`](CHANGELOG.md) for notable changes by release.
+
 ## Example
 
 ```sh

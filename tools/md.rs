@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.15");
+        println!("md 0.6.16");
         return;
     }
 
@@ -504,29 +504,131 @@ fn ensure_blank_line(output: &mut String, theme: &Theme) {
     }
 }
 
+struct WrapToken {
+    text: String,
+    width: usize,
+    code: bool,
+    glued: bool,
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut current_width = 0;
-    for word in paragraph_words(text) {
-        let word_width = rendered_word_width(&word);
-        if current.is_empty() {
-            current.push_str(&word);
-            current_width = word_width;
-        } else if current_width + 1 + word_width <= width {
-            current.push(' ');
-            current.push_str(&word);
-            current_width += 1 + word_width;
-        } else {
+    let mut code_open = false;
+    for token in paragraph_tokens(text) {
+        let separator_width = usize::from(!current.is_empty() && !token.glued);
+        if !current.is_empty() && current_width + separator_width + token.width > width {
+            if code_open {
+                current.push('`');
+                code_open = false;
+            }
             lines.push(std::mem::take(&mut current));
-            current.push_str(&word);
-            current_width = word_width;
+            current_width = 0;
         }
+        if token.code {
+            if !current.is_empty() && !token.glued {
+                current.push(' ');
+                current_width += 1;
+            }
+            if !code_open {
+                current.push('`');
+                code_open = true;
+            }
+            current.push_str(&token.text);
+            current_width += token.width;
+        } else {
+            if code_open {
+                current.push('`');
+                code_open = false;
+            }
+            if !current.is_empty() && !token.glued {
+                current.push(' ');
+                current_width += 1;
+            }
+            current.push_str(&token.text);
+            current_width += token.width;
+        }
+    }
+    if code_open {
+        current.push('`');
     }
     if !current.is_empty() || lines.is_empty() {
         lines.push(current);
     }
     lines
+}
+
+fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
+    let mut tokens = Vec::new();
+    let mut position = 0;
+    while position < text.len() {
+        let whitespace_start = position;
+        while position < text.len() && text.as_bytes()[position].is_ascii_whitespace() {
+            position += 1;
+        }
+        if position >= text.len() {
+            break;
+        }
+        let glued = !tokens.is_empty() && position == whitespace_start;
+        let start = position;
+        if text[position..].starts_with('`') {
+            if let Some(end) = text[position + 1..].find('`') {
+                let end = position + 1 + end;
+                let content = &text[position + 1..end];
+                let mut parts = content.split_whitespace().peekable();
+                if parts.peek().is_none() {
+                    tokens.push(WrapToken { text: String::new(), width: 0, code: true, glued });
+                } else {
+                    let mut first = true;
+                    for part in parts {
+                        tokens.push(WrapToken {
+                            text: part.to_string(),
+                            width: part.chars().count(),
+                            code: true,
+                            glued: if first { glued } else { false },
+                        });
+                        first = false;
+                    }
+                }
+                position = end + 1;
+                let punctuation_start = position;
+                consume_punctuation(text, &mut position);
+                if position > punctuation_start {
+                    tokens.push(WrapToken {
+                        text: text[punctuation_start..position].to_string(),
+                        width: position - punctuation_start,
+                        code: false,
+                        glued: true,
+                    });
+                }
+                continue;
+            }
+        }
+        if text[position..].starts_with('$') && !text[position..].starts_with("$$") {
+            if let Some(end) = find_unescaped(text, position + 1, '$') {
+                position = end + 1;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                continue;
+            }
+        } else if text[position..].starts_with("\\(") {
+            if let Some(end) = text[position + 2..].find("\\)") {
+                position += 2 + end + 2;
+                consume_punctuation(text, &mut position);
+                let word = &text[start..position];
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                continue;
+            }
+        }
+        while position < text.len() && !text.as_bytes()[position].is_ascii_whitespace() {
+            position += 1;
+        }
+        let word = &text[start..position];
+        tokens.push(WrapToken { text: word.to_string(), width: word.chars().count(), code: false, glued });
+    }
+    tokens
 }
 
 fn rendered_word_width(word: &str) -> usize {
@@ -541,40 +643,6 @@ fn rendered_word_width(word: &str) -> usize {
         }
     }
     word.chars().count()
-}
-
-fn paragraph_words(text: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut position = 0;
-    while position < text.len() {
-        while position < text.len() && text.as_bytes()[position].is_ascii_whitespace() {
-            position += 1;
-        }
-        if position >= text.len() {
-            break;
-        }
-        let start = position;
-        if text[position..].starts_with('$') && !text[position..].starts_with("$$") {
-            if let Some(end) = find_unescaped(text, position + 1, '$') {
-                position = end + 1;
-                consume_punctuation(text, &mut position);
-                words.push(text[start..position].to_string());
-                continue;
-            }
-        } else if text[position..].starts_with("\\(") {
-            if let Some(end) = text[position + 2..].find("\\)") {
-                position += 2 + end + 2;
-                consume_punctuation(text, &mut position);
-                words.push(text[start..position].to_string());
-                continue;
-            }
-        }
-        while position < text.len() && !text.as_bytes()[position].is_ascii_whitespace() {
-            position += 1;
-        }
-        words.push(text[start..position].to_string());
-    }
-    words
 }
 
 fn consume_punctuation(text: &str, position: &mut usize) {
@@ -1126,16 +1194,13 @@ fn run_editor(path: &Path) -> io::Result<()> {
 
 fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> {
     let use_default_pager = env::var_os("PAGER").is_none();
-    let use_lessi = use_default_pager && command_available("lessi");
-    let keymap = if use_default_pager && !use_lessi && editable_path.is_some() {
+    let keymap = if use_default_pager && editable_path.is_some() {
         Some(write_less_edit_keymap()?)
     } else {
         None
     };
     let pager = if let Some(path) = &keymap {
         format!("less -R -k {}", path.display())
-    } else if use_lessi {
-        "lessi -R".to_string()
     } else {
         env::var("PAGER").unwrap_or_else(|_| "less -R".to_string())
     };
@@ -1170,16 +1235,6 @@ fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> 
     } else {
         Err(io::Error::new(io::ErrorKind::Other, format!("pager exited with {status}")))
     }
-}
-
-fn command_available(command: &str) -> bool {
-    if command.contains('/') {
-        return Path::new(command).is_file();
-    }
-    let Some(path) = env::var_os("PATH") else {
-        return false;
-    };
-    env::split_paths(&path).any(|directory| directory.join(command).is_file())
 }
 
 fn shell_words(input: &str) -> Option<Vec<String>> {

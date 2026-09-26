@@ -13,13 +13,13 @@ configurable; both default to one space.
 and wrapped list continuation lines are indented beneath their bullet. Nested
 lists retain two spaces of indentation per level. Single newlines are reflowed
 while blank-line paragraph breaks remain. Inline math spans are kept intact
-while wrapping paragraphs; punctuation at soft line breaks is joined naturally.
-Block transitions between paragraphs, lists, and blockquotes receive a blank line.
+while wrapping paragraphs; inline code spans wrap at their internal spaces, and
+punctuation at soft line breaks is joined naturally. Block transitions between
+paragraphs, lists, and blockquotes receive a blank line.
 Every heading is followed by one empty line.
 
-Pager mode is always used: `$PAGER` when set; otherwise `lessi -R` when
-`lessi` is installed, falling back to `less -R`. There is no mouse handling or
-TUI document viewer. Inline and display math using
+Pager mode is always used: `$PAGER`, or `less -R` when `$PAGER` is unset.
+There is no mouse handling or TUI document viewer. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
 letters, operators, matrices, and cases. Display math is centered as a single
@@ -59,15 +59,7 @@ fields shown in the tracked example.
 
 ## Build and install on Linux
 
-The preferred pager is the Rust-based `lessi`, installed user-locally with
-Cargo:
-
-```sh
-cargo install lessi --locked --root ~/.local
-```
-
-If `lessi` is unavailable, `md` falls back to `less -R`. The source is
-[`tools/md.rs`](../tools/md.rs). Math is rendered by the
+The source is [`tools/md.rs`](../tools/md.rs). Math is rendered by the
 vendored MIT-licensed Pi TUI renderer in `vendor/pi-tui/latex.js`, accessed
 through one persistent Node bridge process. Node is therefore required for the
 Pi math path; the Rust fallback remains available if the bridge cannot start.

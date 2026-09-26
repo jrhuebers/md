@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.6");
+        println!("md 0.6.7");
         return;
     }
 
@@ -305,7 +305,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             if let Some(end) = line.find(closing.as_str()) {
                 if let Some((opening, _, mut body)) = math_block.take() {
                     body.push_str(&line[..end]);
-                    push_math_display(&mut output, &opening, &closing, &body, theme);
+                    push_math_display(&mut output, &opening, &closing, &body, theme, width);
                 }
             } else if let Some((_, _, body)) = math_block.as_mut() {
                 if !body.is_empty() {
@@ -320,7 +320,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             if suppress_blank {
                 suppress_blank = false;
             } else {
-                push_line(&mut output, "", theme);
+                ensure_blank_line(&mut output, theme);
             }
             continue;
         }
@@ -330,7 +330,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             let rest = &trimmed[body_start..];
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             if let Some(end) = rest.find(closing) {
-                push_math_display(&mut output, opening, closing, &rest[..end], theme);
+                push_math_display(&mut output, opening, closing, &rest[..end], theme, width);
             } else {
                 math_block = Some((opening.to_string(), closing.to_string(), rest.to_string()));
             }
@@ -399,7 +399,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
 
     flush_paragraph(&mut paragraph, &mut output, theme, width);
     if let Some((opening, closing, body)) = math_block {
-        push_math_display(&mut output, &opening, &closing, &body, theme);
+        push_math_display(&mut output, &opening, &closing, &body, theme, width);
     }
     output
 }
@@ -414,10 +414,13 @@ fn display_math_delimiter(line: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn push_math_display(output: &mut String, opening: &str, closing: &str, source: &str, theme: &Theme) {
+fn push_math_display(output: &mut String, opening: &str, closing: &str, source: &str, theme: &Theme, width: usize) {
+    ensure_blank_line(output, theme);
+    let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
     if math::enabled() {
         for line in math::render_display(source) {
-            let rendered = format!("{}{}{}", fg(theme.normal_fg), line, RESET);
+            let padding = content_width.saturating_sub(line.chars().count()) / 2;
+            let rendered = format!("{}{}{}{}", fg(theme.normal_fg), " ".repeat(padding), line, RESET);
             push_line(output, &rendered, theme);
         }
     } else {
@@ -425,6 +428,7 @@ fn push_math_display(output: &mut String, opening: &str, closing: &str, source: 
             push_line(output, line, theme);
         }
     }
+    ensure_blank_line(output, theme);
 }
 
 fn flush_paragraph(paragraph: &mut Vec<String>, output: &mut String, theme: &Theme, width: usize) {

@@ -22,7 +22,8 @@ more control over math rendering.
 - Provides configurable Glow-inspired light and dark styles, colors, margins,
   terminal width, and optional LaTeX conversion.
 - Uses a built-in terminal pager by default, with keyboard scrolling, an
-  auto-adapting viewport, a mouse-steerable scrollbar, and a position
+  auto-adapting viewport, a mouse-steerable scrollbar (automatically disabled
+  inside Herdr so multiplexer selection remains available), and a position
   indicator. PageUp/PageDown, `u`/`d`, and Ctrl+U/Ctrl+D make half-page jumps;
   Space moves to the next page and `b` to the previous page. `$PAGER` can override it with an external
   pager such as `less -R`.

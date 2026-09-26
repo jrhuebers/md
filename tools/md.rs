@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.9");
+        println!("md 0.6.10");
         return;
     }
 
@@ -461,21 +461,37 @@ fn ensure_blank_line(output: &mut String, theme: &Theme) {
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
+    let mut current_width = 0;
     for word in paragraph_words(text) {
+        let word_width = rendered_word_width(&word);
         if current.is_empty() {
             current.push_str(&word);
-        } else if current.chars().count() + 1 + word.chars().count() <= width {
+            current_width = word_width;
+        } else if current_width + 1 + word_width <= width {
             current.push(' ');
             current.push_str(&word);
+            current_width += 1 + word_width;
         } else {
             lines.push(std::mem::take(&mut current));
             current.push_str(&word);
+            current_width = word_width;
         }
     }
     if !current.is_empty() || lines.is_empty() {
         lines.push(current);
     }
     lines
+}
+
+fn rendered_word_width(word: &str) -> usize {
+    let source = if word.starts_with('$') && !word.starts_with("$$") {
+        word.strip_prefix('$').and_then(|value| value.strip_suffix('$'))
+    } else if word.starts_with("\\(") {
+        word.strip_prefix("\\(").and_then(|value| value.strip_suffix("\\)"))
+    } else {
+        None
+    };
+    source.map(|value| math::render_inline(value).chars().count()).unwrap_or_else(|| word.chars().count())
 }
 
 fn paragraph_words(text: &str) -> Vec<String> {
@@ -1059,9 +1075,9 @@ fn page(rendered: &str, editable_path: Option<&Path>) -> io::Result<PageAction> 
         None
     };
     let pager = if let Some(path) = &keymap {
-        format!("less -R -k {}", path.display())
+        format!("less -R -J -k {}", path.display())
     } else {
-        env::var("PAGER").unwrap_or_else(|_| "less -R".to_string())
+        env::var("PAGER").unwrap_or_else(|_| "less -R -J".to_string())
     };
     let words = shell_words(&pager).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid PAGER"))?;
     if words.is_empty() {

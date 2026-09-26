@@ -15,7 +15,8 @@ lists retain two spaces of indentation per level. Single newlines are reflowed
 while blank-line paragraph breaks remain. Inline math spans are kept intact
 while wrapping paragraphs. Every heading is followed by one empty line.
 
-Pager mode is always used: `$PAGER`, or `less -R` when `$PAGER` is unset. There
+Pager mode is always used: `$PAGER`, or `less -R -J` when `$PAGER` is unset.
+The default less status column provides a position gutter while scrolling. There
 is no mouse handling or TUI document viewer. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek

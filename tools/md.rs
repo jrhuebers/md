@@ -137,7 +137,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.8");
+        println!("md 0.6.9");
         return;
     }
 
@@ -416,17 +416,17 @@ fn display_math_delimiter(line: &str) -> Option<(&str, &str)> {
 
 fn push_math_display(output: &mut String, opening: &str, closing: &str, source: &str, theme: &Theme, width: usize) {
     ensure_blank_line(output, theme);
-    let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
-    if math::enabled() {
-        for line in math::render_display(source) {
-            let padding = content_width.saturating_sub(line.chars().count()) / 2;
-            let rendered = format!("{}{}{}{}", fg(theme.normal_fg), " ".repeat(padding), line, RESET);
-            push_line(output, &rendered, theme);
-        }
+    let lines: Vec<String> = if math::enabled() {
+        math::render_display(source)
     } else {
-        for line in format!("{opening}{source}{closing}").lines() {
-            push_line(output, line, theme);
-        }
+        format!("{opening}{source}{closing}").lines().map(ToOwned::to_owned).collect()
+    };
+    let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
+    let block_width = lines.iter().map(|line| line.chars().count()).max().unwrap_or(0);
+    let padding = content_width.saturating_sub(block_width) / 2;
+    for line in lines {
+        let rendered = format!("{}{}{}{}", fg(theme.normal_fg), " ".repeat(padding), line, RESET);
+        push_line(output, &rendered, theme);
     }
     ensure_blank_line(output, theme);
 }

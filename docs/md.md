@@ -19,8 +19,9 @@ Pager mode is always used: `$PAGER`, or `less -R` when `$PAGER` is unset. There
 is no mouse handling or TUI document viewer. Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
-letters, operators, matrices, and cases. Display math is centered and separated
-from surrounding paragraphs by blank lines. Unsupported TeX remains readable
+letters, operators, matrices, and cases. Display math is centered as a single
+layout block (preserving script and fraction alignment) and separated from
+surrounding paragraphs by blank lines. Unsupported TeX remains readable
 as source text.
 
 When given a directory—or no argument from an interactive terminal—`md` opens a

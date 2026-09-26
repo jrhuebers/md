@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.42] - 2026-09-27
+
 ### Fixed
 
+- Render fenced code blocks with the same foreground and background style as inline code, filling the entire content column as a rectangle.
+- Render YAML frontmatter with full-width rules while preserving its source line breaks.
+- Preserve every source line inside fenced code blocks instead of applying paragraph/list normalization.
 - Keep the built-in pager's terminal input in blocking mode so a suspended parent terminal application (such as Yazi) does not mistake a timed-out read for EOF after the pager exits. Poll for incomplete escape sequences instead.
 
 ## [0.6.41] - 2026-09-26
@@ -90,7 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spacing between paragraphs, lists, blockquotes, and headings.
 - Punctuation and inline math split across source soft line breaks.
 
-[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.41...HEAD
+[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.42...HEAD
+[0.6.42]: https://github.com/jrhuebers/md/compare/v0.6.41...v0.6.42
 [0.6.41]: https://github.com/jrhuebers/md/compare/v0.6.40...v0.6.41
 [0.6.40]: https://github.com/jrhuebers/md/compare/v0.6.39...v0.6.40
 [0.6.39]: https://github.com/jrhuebers/md/compare/v0.6.16...v0.6.39

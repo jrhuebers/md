@@ -25,7 +25,6 @@ styles:
     link_text_fg: 29
     inline_code_fg: 234
     inline_code_bg: 254
-    code_block_fg: 234
     margin_left: 1
     margin_right: 1
   glow-light:
@@ -38,7 +37,6 @@ styles:
     link_text_fg: 29
     inline_code_fg: 203
     inline_code_bg: 254
-    code_block_fg: 242
     margin_left: 1
     margin_right: 1
   glow-dark:
@@ -51,6 +49,5 @@ styles:
     link_text_fg: 35
     inline_code_fg: 203
     inline_code_bg: 236
-    code_block_fg: 244
     margin_left: 1
     margin_right: 1

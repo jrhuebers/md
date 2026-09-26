@@ -23,7 +23,6 @@ struct Theme {
     link_text_fg: u8,
     inline_code_fg: u8,
     inline_code_bg: u8,
-    code_block_fg: u8,
     margin_left: usize,
     margin_right: usize,
 }
@@ -40,7 +39,6 @@ impl Theme {
             link_text_fg: 29,
             inline_code_fg: 203,
             inline_code_bg: 254,
-            code_block_fg: 242,
             margin_left: 1,
             margin_right: 1,
         }
@@ -57,7 +55,6 @@ impl Theme {
             link_text_fg: 35,
             inline_code_fg: 203,
             inline_code_bg: 236,
-            code_block_fg: 244,
             margin_left: 1,
             margin_right: 1,
         }
@@ -78,7 +75,6 @@ impl Theme {
             "link_text_fg" => self.link_text_fg = parsed,
             "inline_code_fg" => self.inline_code_fg = parsed,
             "inline_code_bg" => self.inline_code_bg = parsed,
-            "code_block_fg" => self.code_block_fg = parsed,
             "margin_left" => self.margin_left = parsed as usize,
             "margin_right" => self.margin_right = parsed as usize,
             _ => {}
@@ -142,7 +138,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.41");
+        println!("md 0.6.42");
         return;
     }
 
@@ -308,11 +304,37 @@ fn read_input(paths: &[String]) -> io::Result<String> {
 }
 
 fn normalized_lines(input: &str) -> Vec<String> {
+    let raw_lines: Vec<&str> = input.lines().map(|line| line.strip_suffix('\r').unwrap_or(line)).collect();
+    let has_frontmatter = raw_lines.first().is_some_and(|line| line.trim() == "---")
+        && raw_lines.iter().skip(1).any(|line| line.trim() == "---");
     let mut lines: Vec<String> = Vec::new();
     let mut last_was_list = false;
-    for raw_line in input.lines() {
-        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+    let mut at_document_start = true;
+    let mut in_frontmatter = false;
+    let mut in_code = false;
+    for line in raw_lines {
         let trimmed = line.trim();
+        if has_frontmatter && (at_document_start || in_frontmatter) {
+            lines.push(line.to_string());
+            if at_document_start && trimmed == "---" {
+                in_frontmatter = true;
+            } else if in_frontmatter && trimmed == "---" {
+                in_frontmatter = false;
+            }
+            at_document_start = false;
+            last_was_list = false;
+            continue;
+        }
+        if in_code || is_fence(line.trim_start()) {
+            lines.push(line.to_string());
+            if is_fence(line.trim_start()) {
+                in_code = !in_code;
+            }
+            at_document_start = false;
+            last_was_list = false;
+            continue;
+        }
+        at_document_start = false;
         let is_list = list_item(line).is_some();
         let is_continuation = last_was_list
             && !trimmed.is_empty()
@@ -361,15 +383,38 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut output = String::with_capacity(input.len() + input.len() / 8);
     push_line(&mut output, "", theme);
     let mut paragraph: Vec<String> = Vec::new();
+    let normalized = normalized_lines(input);
+    let has_frontmatter = normalized.first().is_some_and(|line| line.trim() == "---")
+        && normalized.iter().skip(1).any(|line| line.trim() == "---");
+    let mut in_frontmatter = has_frontmatter;
+    let mut frontmatter_opening = has_frontmatter;
     let mut in_code = false;
     let mut math_block: Option<(String, String, String)> = None;
     let mut previous_block: Option<BlockKind> = None;
     let mut suppress_blank = false;
 
-    let mut lines = normalized_lines(input).into_iter().peekable();
+    let mut lines = normalized.into_iter().peekable();
     while let Some(raw_line) = lines.next() {
         let line = raw_line.as_str();
         let trimmed = line.trim_start();
+
+        if in_frontmatter {
+            previous_block = None;
+            let is_delimiter = frontmatter_opening || trimmed.trim() == "---";
+            if frontmatter_opening {
+                frontmatter_opening = false;
+            } else if is_delimiter {
+                in_frontmatter = false;
+            }
+            if is_delimiter {
+                let rendered = render_rule(theme, width);
+                push_line(&mut output, &rendered, theme);
+            } else {
+                let rendered = format!("{}{}{}", fg(theme.normal_fg), line, RESET);
+                push_line(&mut output, &rendered, theme);
+            }
+            continue;
+        }
 
         if is_fence(trimmed) {
             previous_block = None;
@@ -379,9 +424,12 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
         }
         if in_code {
             previous_block = None;
-            let mut rendered = String::from("  ");
-            rendered.push_str(&fg(theme.code_block_fg));
+            let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
+            let code_width = 2 + visible_width(line);
+            let mut rendered = code_style(theme);
+            rendered.push_str("  ");
             rendered.push_str(line);
+            rendered.push_str(&" ".repeat(content_width.saturating_sub(code_width)));
             rendered.push_str(RESET);
             push_line(&mut output, &rendered, theme);
             continue;
@@ -476,7 +524,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
         if is_rule(trimmed) {
             previous_block = None;
             flush_paragraph(&mut paragraph, &mut output, theme, width);
-            let rendered = format!("{}────────────────────────────────────────{}", fg(theme.rule_fg), RESET);
+            let rendered = render_rule(theme, width);
             push_line(&mut output, &rendered, theme);
             continue;
         }
@@ -1079,6 +1127,15 @@ fn is_fence(line: &str) -> bool {
     line.starts_with("```") || line.starts_with("~~~")
 }
 
+fn code_style(theme: &Theme) -> String {
+    style(theme.inline_code_fg, Some(theme.inline_code_bg), false, false, false)
+}
+
+fn render_rule(theme: &Theme, width: usize) -> String {
+    let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
+    format!("{}{}{}", fg(theme.rule_fg), "─".repeat(content_width), RESET)
+}
+
 fn heading(line: &str) -> Option<(usize, &str)> {
     let level = line.chars().take_while(|character| *character == '#').count();
     if (1..=6).contains(&level) && line.chars().nth(level) == Some(' ') {
@@ -1179,7 +1236,7 @@ fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold
         }
         if rest.starts_with('`') {
             if let Some(end) = input[index + 1..].find('`') {
-                output.push_str(&style(theme.inline_code_fg, Some(theme.inline_code_bg), false, false, false));
+                output.push_str(&code_style(theme));
                 output.push_str(&input[index + 1..index + 1 + end]);
                 output.push_str(&restore_inline(base_foreground, bold_active));
                 index += end + 2;
@@ -1698,6 +1755,35 @@ mod tests {
             let rendered = render_inline(&chunk, 234, &Theme::glow_light());
             assert!(!rendered.contains('`'), "visible backtick: {}", chunk);
         }
+    }
+
+    #[test]
+    fn renders_fenced_code_with_the_inline_code_style() {
+        let theme = Theme::glow_light();
+        let rendered = render_document("`inline`\n\n```\nfirst\nsecond\n```", &theme, 80, 0);
+        let styled_code = format!("{}  first{}{}", code_style(&theme), " ".repeat(71), RESET);
+        assert!(rendered.contains(&styled_code));
+        assert!(rendered.contains(&format!("{}  second{}{}", code_style(&theme), " ".repeat(70), RESET)));
+    }
+
+    #[test]
+    fn preserves_lines_inside_fenced_code_blocks() {
+        let source = "```\nplugins:\n  - search\n  - mkdocstrings:\n      default_handler: python\n      handlers:\n        python:\n          paths:\n            - libs/shared_db/src\n            - services/user_api/src\n```";
+        let lines = normalized_lines(source);
+        assert!(lines.contains(&"  - mkdocstrings:".to_string()));
+        assert!(lines.contains(&"      default_handler: python".to_string()));
+        assert!(!lines.iter().any(|line| line.contains("mkdocstrings:      default_handler")));
+    }
+
+    #[test]
+    fn preserves_frontmatter_lines_and_expands_rules_to_the_content_width() {
+        let theme = Theme::glow_light();
+        let rendered = render_document("---\nname: writer\nrunner:\n  type: external-cli\n---", &theme, 30, 0);
+        let rule = format!("{}{}{}", fg(theme.rule_fg), "─".repeat(28), RESET);
+        assert_eq!(rendered.matches(&rule).count(), 2);
+        assert!(rendered.contains("name: writer\x1b[0m \n"));
+        assert!(rendered.contains("runner:\x1b[0m \n"));
+        assert!(rendered.contains("  type: external-cli\x1b[0m \n"));
     }
 
     #[test]

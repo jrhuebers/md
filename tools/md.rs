@@ -139,7 +139,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.18");
+        println!("md 0.6.19");
         return;
     }
 
@@ -296,6 +296,7 @@ enum BlockKind {
 
 fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut output = String::with_capacity(input.len() + input.len() / 8);
+    push_line(&mut output, "", theme);
     let mut paragraph: Vec<String> = Vec::new();
     let mut in_code = false;
     let mut math_block: Option<(String, String, String)> = None;
@@ -443,6 +444,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     if let Some((opening, closing, body)) = math_block {
         push_math_display(&mut output, &opening, &closing, &body, theme, width);
     }
+    ensure_blank_line(&mut output, theme);
     output
 }
 

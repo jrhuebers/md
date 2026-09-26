@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Ensure exactly one blank line of terminal breathing room at the beginning and
+  end of rendered documents.
+
 ### Added
 
 - First built-in pager implementation with automatic terminal-size tracking,

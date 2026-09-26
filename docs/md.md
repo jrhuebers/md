@@ -16,7 +16,8 @@ while blank-line paragraph breaks remain. Inline math spans are kept intact
 while wrapping paragraphs; inline code spans wrap at their internal spaces, and
 punctuation at soft line breaks is joined naturally. Block transitions between
 paragraphs, lists, and blockquotes receive a blank line.
-Every heading is followed by one empty line.
+Every heading is followed by one empty line. Rendered documents also have
+exactly one blank line at the beginning and end.
 
 Pager mode is always used. With `$PAGER` unset, `md` uses its built-in
 terminal pager with keyboard scrolling, automatic terminal-size tracking, a mouse-steerable right-side scrollbar, and a position

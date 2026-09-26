@@ -27,9 +27,9 @@ more control over math rendering.
 - Opens directories with an interactive Markdown file picker with paging,
   live file counts, navigation, and editor shortcuts.
 
-`md` is intentionally a pager-oriented viewer rather than a full CommonMark or
-GFM implementation. It has no mouse-driven document UI and does not require
-Glow.
+`md` adds one blank line of terminal breathing room at the beginning and end
+of each rendered document. It is intentionally a pager-oriented viewer rather
+than a full CommonMark or GFM implementation and does not require Glow.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for notable changes by release.
 

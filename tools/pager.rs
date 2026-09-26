@@ -307,7 +307,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
 
     let percent = if max_offset == 0 { 100 } else { (offset * 100 / max_offset).min(100) };
     let edit_hint = if editable { "e edit  " } else { "" };
-    let status = format!(" md  {percent:>3}%  {}/{}   ↑/↓ line  PgUp/PgDn/u/d half  Space next/b prev page  g/G top/bottom  {edit_hint}q quit", offset + 1, total);
+    let status = format!(" md  {percent:>3}%  {}/{}   ↑/↓ line  PgUp/PgDn/u/d half  Space/b page  g/G top/bottom  {edit_hint}q quit", offset + 1, total);
     let status = truncate_plain(&status, columns);
     let status = format!("{status:<columns$}");
     screen.push_str("\x1b[7m");

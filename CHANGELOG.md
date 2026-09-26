@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep inline code styled when its opening backtick follows punctuation and the span wraps across lines (for example, ``(`git rev-parse HEAD`)``).
+
 ## [0.6.39] - 2026-09-26
 
 ### Added

@@ -726,6 +726,11 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
             }
         }
         while position < text.len() && !text.as_bytes()[position].is_ascii_whitespace() {
+            // Split a word before an embedded code span, e.g. "(`git ...`)".
+            // Otherwise wrapping can separate its backticks before render_inline sees them.
+            if position > start && text.as_bytes()[position] == b'`' && text[position + 1..].contains('`') {
+                break;
+            }
             position += 1;
         }
         let word = &text[start..position];
@@ -1408,4 +1413,22 @@ fn shell_words(input: &str) -> Option<Vec<String>> {
         words.push(word);
     }
     Some(words)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wraps_code_after_punctuation_without_exposing_backticks() {
+        let text = "Git commit hash (`git rev-parse HEAD`) and `uv.lock` hash";
+        let chunks = wrap_text(text, 23);
+        assert!(chunks.iter().any(|chunk| chunk.ends_with("`git`")));
+        assert!(chunks.iter().any(|chunk| chunk.starts_with("`rev-parse HEAD`")));
+        for chunk in chunks {
+            assert_eq!(chunk.matches('`').count() % 2, 0, "unpaired backtick: {chunk}");
+            let rendered = render_inline(&chunk, 234, &Theme::glow_light());
+            assert!(!rendered.contains('`'), "visible backtick: {}", chunk);
+        }
+    }
 }

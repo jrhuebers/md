@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.43] - 2026-09-27
+
+### Changed
+
+- Use the configurable external pager command, defaulting to `less -R`; `$PAGER` still overrides it.
+
+### Removed
+
+- Disable the custom built-in pager while investigating terminal-mode issues with Yazi.
+
 ## [0.6.42] - 2026-09-27
 
 ### Fixed
@@ -95,7 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spacing between paragraphs, lists, blockquotes, and headings.
 - Punctuation and inline math split across source soft line breaks.
 
-[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.42...HEAD
+[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.43...HEAD
+[0.6.43]: https://github.com/jrhuebers/md/compare/v0.6.42...v0.6.43
 [0.6.42]: https://github.com/jrhuebers/md/compare/v0.6.41...v0.6.42
 [0.6.41]: https://github.com/jrhuebers/md/compare/v0.6.40...v0.6.41
 [0.6.40]: https://github.com/jrhuebers/md/compare/v0.6.39...v0.6.40

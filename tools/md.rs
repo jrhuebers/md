@@ -9,7 +9,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod math;
-mod pager;
 
 // The built-in defaults mirror Glamour's LightStyle and DarkStyle, which Glow uses.
 #[derive(Clone)]
@@ -87,9 +86,7 @@ struct Config {
     width: usize,
     max_line_length: usize,
     render_latex: bool,
-    pager_poll_speed: usize,
-    pager_scroll_step: usize,
-    pager_mouse: bool,
+    pager: String,
     themes: HashMap<String, Theme>,
 }
 
@@ -98,14 +95,14 @@ impl Config {
         let mut themes = HashMap::new();
         themes.insert("glow-light".to_string(), Theme::glow_light());
         themes.insert("glow-dark".to_string(), Theme::glow_dark());
-        Self { style: "glow-light".to_string(), width: 0, max_line_length: 100, render_latex: true, pager_poll_speed: 60, pager_scroll_step: 2, pager_mouse: false, themes }
+        Self { style: "glow-light".to_string(), width: 0, max_line_length: 100, render_latex: true, pager: "less -R".to_string(), themes }
     }
 
-    fn theme(self) -> io::Result<(Theme, usize, usize, bool, usize, usize, bool)> {
+    fn theme(self) -> io::Result<(Theme, usize, usize, bool, String)> {
         let theme = self.themes.get(&self.style).cloned().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, format!("unknown md style: {}", self.style))
         })?;
-        Ok((theme, self.width, self.max_line_length, self.render_latex, self.pager_poll_speed, self.pager_scroll_step, self.pager_mouse))
+        Ok((theme, self.width, self.max_line_length, self.render_latex, self.pager))
     }
 }
 
@@ -125,7 +122,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (theme, configured_width, max_line_length, render_latex, pager_poll_speed, pager_scroll_step, pager_mouse) = config;
+    let (theme, configured_width, max_line_length, render_latex, pager) = config;
     math::set_enabled(render_latex);
     let width = if configured_width == 0 {
         terminal_columns().unwrap_or(80) as usize
@@ -138,7 +135,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.6.42");
+        println!("md 0.6.43");
         return;
     }
 
@@ -150,11 +147,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let editable_path = if paths.len() == 1 && paths[0] != "-" {
-        Some(PathBuf::from(&paths[0]))
-    } else {
-        None
-    };
     loop {
         let input = match read_input(&paths) {
             Ok(input) => input,
@@ -163,26 +155,12 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let mouse_enabled = pager_mouse && env::var_os("HERDR_ENV").is_none();
-        let render_width = if env::var_os("PAGER").is_none() && mouse_enabled { width.saturating_sub(1) } else { width };
-        let rendered = render_document(&input, &theme, render_width, max_line_length);
-        match page(&rendered, editable_path.as_deref(), pager_poll_speed, pager_scroll_step, mouse_enabled, |new_width| {
-            render_document(&input, &theme, new_width, max_line_length)
-        }) {
-            Ok(PageAction::Done) => break,
-            Ok(PageAction::Edit) => {
-                if let Some(path) = editable_path.as_deref() {
-                    if let Err(error) = run_editor(path) {
-                        eprintln!("md: {error}");
-                        std::process::exit(1);
-                    }
-                }
-            }
-            Err(error) => {
-                eprintln!("md: {error}");
-                std::process::exit(1);
-            }
+        let rendered = render_document(&input, &theme, width, max_line_length);
+        if let Err(error) = page(&rendered, &pager) {
+            eprintln!("md: {error}");
+            std::process::exit(1);
         }
+        break;
     }
 }
 
@@ -229,24 +207,12 @@ fn parse_config(contents: &str) -> io::Result<Config> {
                 config.render_latex = value.trim().parse::<bool>().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "md.yaml render_latex must be true or false")
                 })?;
-            } else if let Some(value) = content.strip_prefix("pager_poll_speed:") {
-                config.pager_poll_speed = value.trim().parse::<usize>().map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_poll_speed must be a positive integer")
-                })?;
-                if config.pager_poll_speed == 0 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_poll_speed must be a positive integer"));
+            } else if let Some(value) = content.strip_prefix("pager:") {
+                let pager = value.trim().trim_matches(['"', '\'']).trim().to_string();
+                if pager.is_empty() {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager must not be empty"));
                 }
-            } else if let Some(value) = content.strip_prefix("pager_scroll_step:") {
-                config.pager_scroll_step = value.trim().parse::<usize>().map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_step must be a positive integer")
-                })?;
-                if config.pager_scroll_step == 0 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_scroll_step must be a positive integer"));
-                }
-            } else if let Some(value) = content.strip_prefix("pager_mouse:") {
-                config.pager_mouse = value.trim().parse::<bool>().map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "md.yaml pager_mouse must be true or false")
-                })?;
+                config.pager = pager;
             } else if content == "styles:" {
                 in_styles = true;
             }
@@ -1606,30 +1572,6 @@ fn restore_tty(saved: &str) -> io::Result<()> {
     }
 }
 
-enum PageAction {
-    Done,
-    Edit,
-}
-
-fn write_less_edit_keymap() -> io::Result<PathBuf> {
-    let base = env::temp_dir().join(format!("md-lesskey-{}", std::process::id()));
-    let source_path = base.with_extension("source");
-    let compiled_path = base.with_extension("compiled");
-    fs::write(&source_path, "#command\ne quit e\n")?;
-    let status = Command::new("lesskey")
-        .args(["-o", compiled_path.to_string_lossy().as_ref(), source_path.to_string_lossy().as_ref()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    let _ = fs::remove_file(source_path);
-    if status.success() {
-        Ok(compiled_path)
-    } else {
-        let _ = fs::remove_file(&compiled_path);
-        Err(io::Error::new(io::ErrorKind::Other, "lesskey could not compile the editor keymap"))
-    }
-}
-
 fn run_editor(path: &Path) -> io::Result<()> {
     let editor = env::var("VISUAL").or_else(|_| env::var("EDITOR")).unwrap_or_else(|_| "vi".to_string());
     let words = shell_words(&editor).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid editor command"))?;
@@ -1650,55 +1592,25 @@ fn run_editor(path: &Path) -> io::Result<()> {
     }
 }
 
-fn page<F>(rendered: &str, editable_path: Option<&Path>, pager_poll_speed: usize, pager_scroll_step: usize, mouse_enabled: bool, rerender: F) -> io::Result<PageAction>
-where
-    F: FnMut(usize) -> String,
-{
-    if env::var_os("PAGER").is_none() {
-        return match pager::run(rendered, editable_path.is_some(), pager_poll_speed, pager_scroll_step, mouse_enabled, rerender)? {
-            pager::Action::Done => Ok(PageAction::Done),
-            pager::Action::Edit => Ok(PageAction::Edit),
-        };
-    }
-    let use_default_pager = false;
-    let keymap = if use_default_pager && editable_path.is_some() {
-        Some(write_less_edit_keymap()?)
-    } else {
-        None
-    };
-    let pager = if let Some(path) = &keymap {
-        format!("less -R -k {}", path.display())
-    } else {
-        env::var("PAGER").unwrap_or_else(|_| "less -R".to_string())
-    };
-    let words = shell_words(&pager).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid PAGER"))?;
+fn page(rendered: &str, configured_pager: &str) -> io::Result<()> {
+    let pager = env::var("PAGER").unwrap_or_else(|_| configured_pager.to_string());
+    let words = shell_words(&pager).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid pager command"))?;
     if words.is_empty() {
-        if let Some(path) = keymap { let _ = fs::remove_file(path); }
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty PAGER"));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty pager command"));
     }
 
-    let mut child = match Command::new(&words[0])
+    let mut child = Command::new(&words[0])
         .args(&words[1..])
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            if let Some(path) = keymap { let _ = fs::remove_file(path); }
-            return Err(error);
-        }
-    };
+        .spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(rendered.as_bytes());
     }
     let status = child.wait()?;
-    if let Some(path) = keymap { let _ = fs::remove_file(path); }
-    if status.code() == Some('e' as i32) {
-        Ok(PageAction::Edit)
-    } else if status.success() {
-        Ok(PageAction::Done)
+    if status.success() {
+        Ok(())
     } else {
         Err(io::Error::new(io::ErrorKind::Other, format!("pager exited with {status}")))
     }
@@ -1743,6 +1655,13 @@ fn shell_words(input: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn defaults_to_less_and_accepts_a_configured_pager() {
+        assert_eq!(Config::default().pager, "less -R");
+        let config = parse_config("pager: more -R\n").expect("pager config should parse");
+        assert_eq!(config.pager, "more -R");
+    }
 
     #[test]
     fn wraps_code_after_punctuation_without_exposing_backticks() {

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Highlight fenced code blocks by language with Syntect, using the active light or dark style.
 - Render display math inside blockquotes while retaining the quote bar and its indentation.
+- Search visible text in the built-in pager with `/`, highlight matches, and move through matching lines with `n`/`N`.
 
 ### Changed
 

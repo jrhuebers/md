@@ -24,6 +24,19 @@ pub enum Action {
 }
 
 #[derive(Clone, Copy)]
+pub struct SearchColors {
+    pub selected_bg: u8,
+    pub other_bg: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Match {
+    row: usize,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Copy)]
 enum Key {
     Up,
     Down,
@@ -70,7 +83,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run<F>(rendered: &str, editable: bool, poll_speed: usize, scroll_step: usize, mouse_enabled: bool, mut rerender: F) -> io::Result<Action>
+pub fn run<F>(rendered: &str, editable: bool, poll_speed: usize, scroll_step: usize, mouse_enabled: bool, search_colors: SearchColors, mut rerender: F) -> io::Result<Action>
 where
     F: FnMut(usize) -> String,
 {
@@ -114,7 +127,7 @@ where
                 let content_width = if mouse_enabled { columns.saturating_sub(1).max(1) } else { columns };
                 rendered = rerender(content_width);
                 lines = collect_lines(&rendered);
-                matches = matching_rows(&lines, &query);
+                matches = search_matches(&lines, &query);
                 active_match = None;
                 total = lines.len().max(1);
                 let new_max = total.saturating_sub(viewport);
@@ -135,7 +148,7 @@ where
         let max_offset = total.saturating_sub(viewport);
         offset = offset.min(max_offset);
         if dirty {
-            draw(&lines, offset, total, viewport, columns.max(2), editable, mouse_enabled, dragging.is_some() || hovered, clear_screen, &query, prompt.as_deref(), active_match.map(|index| (index + 1, matches.len())));
+            draw(&lines, offset, total, viewport, columns.max(2), editable, mouse_enabled, dragging.is_some() || hovered, clear_screen, &query, prompt.as_deref(), active_match.map(|index| (index + 1, matches.len())), active_match.map(|index| matches[index]), search_colors);
             dirty = false;
             clear_screen = false;
         }
@@ -150,10 +163,10 @@ where
                     let entered = prompt.take().unwrap_or_default();
                     if !entered.is_empty() {
                         query = entered;
-                        matches = matching_rows(&lines, &query);
-                        active_match = (!matches.is_empty()).then(|| matches.partition_point(|row| *row < offset) % matches.len());
+                        matches = search_matches(&lines, &query);
+                        active_match = (!matches.is_empty()).then(|| matches.partition_point(|item| item.row < offset) % matches.len());
                         if let Some(index) = active_match {
-                            offset = matches[index].min(total.saturating_sub(viewport));
+                            offset = matches[index].row.min(total.saturating_sub(viewport));
                         }
                     }
                 }
@@ -207,10 +220,15 @@ where
                 Key::Search => { prompt = Some(String::new()); dirty = true; }
                 Key::NextMatch | Key::PreviousMatch => {
                     let forward = matches!(key, Key::NextMatch);
-                    let current = active_match.map(|index| matches[index]).unwrap_or(offset);
-                    if let Some(index) = next_match(&matches, current, forward) {
+                    if !matches.is_empty() {
+                        let index = active_match.map(|index| step_match(index, matches.len(), forward))
+                            .unwrap_or_else(|| if forward {
+                                matches.partition_point(|item| item.row < offset) % matches.len()
+                            } else {
+                                matches.partition_point(|item| item.row <= offset).checked_sub(1).unwrap_or(matches.len() - 1)
+                            });
                         active_match = Some(index);
-                        offset = matches[index].min(max_offset);
+                        offset = matches[index].row.min(max_offset);
                         dirty = true;
                     }
                 }
@@ -230,25 +248,22 @@ fn collect_lines(rendered: &str) -> Vec<String> {
     rendered.lines().map(ToOwned::to_owned).collect()
 }
 
-fn matching_rows(lines: &[String], query: &str) -> Vec<usize> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let needle = query.to_ascii_lowercase();
-    lines.iter().enumerate().filter_map(|(index, line)| {
-        plain_text(line).to_ascii_lowercase().contains(&needle).then_some(index)
+fn search_matches(lines: &[String], query: &str) -> Vec<Match> {
+    if query.is_empty() { return Vec::new(); }
+    lines.iter().enumerate().flat_map(|(row, line)| {
+        match_ranges(&plain_text(line), query).into_iter().map(move |(start, end)| Match { row, start, end })
     }).collect()
 }
 
-fn next_match(matches: &[usize], current: usize, forward: bool) -> Option<usize> {
-    if matches.is_empty() {
-        return None;
-    }
-    if forward {
-        Some(matches.partition_point(|row| *row <= current) % matches.len())
-    } else {
-        Some(matches.partition_point(|row| *row < current).checked_sub(1).unwrap_or(matches.len() - 1))
-    }
+fn match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() { return Vec::new(); }
+    let needle = query.to_ascii_lowercase();
+    text.to_ascii_lowercase().match_indices(&needle)
+        .map(|(start, _)| (start, start + needle.len())).collect()
+}
+
+fn step_match(index: usize, total: usize, forward: bool) -> usize {
+    if forward { (index + 1) % total } else { (index + total - 1) % total }
 }
 
 fn plain_text(line: &str) -> String {
@@ -266,45 +281,64 @@ fn plain_text(line: &str) -> String {
     result
 }
 
-fn highlight_matches(line: &str, query: &str) -> String {
-    if query.is_empty() {
-        return line.to_string();
-    }
-    let plain = plain_text(line);
-    let needle = query.to_ascii_lowercase();
-    let lower = plain.to_ascii_lowercase();
-    let ranges: Vec<_> = lower.match_indices(&needle).map(|(start, _)| (start, start + needle.len())).collect();
-    if ranges.is_empty() {
-        return line.to_string();
-    }
+fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, colors: SearchColors) -> String {
+    let ranges = match_ranges(&plain_text(line), query);
+    if ranges.is_empty() { return line.to_string(); }
     let mut result = String::new();
     let mut chars = line.chars();
     let mut position = 0;
     let mut index = 0;
     let mut highlighting = false;
+    let mut current_background = "\x1b[49m".to_string();
+    let mut highlight_background = String::new();
     while let Some(character) = chars.next() {
         if character == '\x1b' {
-            result.push(character);
+            let mut escape = String::from("\x1b");
             for control in chars.by_ref() {
-                result.push(control);
+                escape.push(control);
                 if control.is_ascii_alphabetic() { break; }
             }
-            if highlighting { result.push_str("\x1b[7m"); }
+            update_background(&escape, &mut current_background);
+            result.push_str(&escape);
+            if highlighting { result.push_str(&highlight_background); }
             continue;
         }
         if index < ranges.len() && position == ranges[index].0 {
-            result.push_str("\x1b[7m");
+            let color = if selected == Some(ranges[index]) { colors.selected_bg } else { colors.other_bg };
+            highlight_background = format!("\x1b[48;5;{color}m");
+            result.push_str(&highlight_background);
             highlighting = true;
         }
         result.push(character);
         position += character.len_utf8();
         if index < ranges.len() && position == ranges[index].1 {
-            result.push_str("\x1b[27m");
+            result.push_str(&current_background);
             highlighting = false;
             index += 1;
         }
     }
     result
+}
+
+fn update_background(escape: &str, current: &mut String) {
+    let Some(params) = escape.strip_prefix("\x1b[").and_then(|value| value.strip_suffix('m')) else { return };
+    let codes: Vec<_> = params.split(';').map(|code| code.parse::<u16>().unwrap_or(0)).collect();
+    let mut index = 0;
+    while index < codes.len() {
+        match codes[index] {
+            0 | 49 => *current = "\x1b[49m".to_string(),
+            48 if codes.get(index + 1) == Some(&5) && codes.len() > index + 2 => {
+                *current = format!("\x1b[48;5;{}m", codes[index + 2]);
+                index += 2;
+            }
+            48 if codes.get(index + 1) == Some(&2) && codes.len() > index + 4 => {
+                *current = format!("\x1b[48;2;{};{};{}m", codes[index + 2], codes[index + 3], codes[index + 4]);
+                index += 4;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
 }
 
 fn read_key_timeout(stdin: &mut File, timeout: Duration, searching: bool) -> io::Result<Option<Key>> {
@@ -404,7 +438,7 @@ fn scrollbar_offset(row: usize, viewport: usize, total: usize) -> usize {
     }
 }
 
-fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, mouse_enabled: bool, dragging: bool, clear_screen: bool, query: &str, prompt: Option<&str>, match_count: Option<(usize, usize)>) {
+fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, mouse_enabled: bool, dragging: bool, clear_screen: bool, query: &str, prompt: Option<&str>, match_count: Option<(usize, usize)>, selected: Option<Match>, colors: SearchColors) {
     let content_width = if mouse_enabled { columns.saturating_sub(1).max(1) } else { columns };
     let thumb_size = if total <= viewport {
         viewport
@@ -425,7 +459,8 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
     };
     for row in 0..viewport {
         let line = lines.get(offset + row).map(String::as_str).unwrap_or("");
-        let content = truncate_ansi(&highlight_matches(line, query), content_width);
+        let selected_range = selected.filter(|item| item.row == offset + row).map(|item| (item.start, item.end));
+        let content = truncate_ansi(&highlight_matches(line, query, selected_range, colors), content_width);
         screen.push_str(&content);
         let used = visible_width(&content);
         screen.push_str(&" ".repeat(content_width.saturating_sub(used)));
@@ -641,23 +676,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn searches_visible_text_and_wraps_in_both_directions() {
-        let lines = vec!["\x1b[1mAlpha\x1b[0m".into(), "unrelated".into(), "α alpha".into()];
-        let matches = matching_rows(&lines, "ALPHA");
-        assert_eq!(matches, vec![0, 2]);
-        assert_eq!(next_match(&matches, 0, true), Some(1));
-        assert_eq!(next_match(&matches, 2, true), Some(0));
-        assert_eq!(next_match(&matches, 0, false), Some(1));
-        assert_eq!(matching_rows(&lines, "α"), vec![2]);
-        assert_eq!(next_match(&[], 0, true), None);
+    fn searches_each_visible_occurrence_and_wraps_in_both_directions() {
+        let lines = vec!["\x1b[1mAlpha alpha\x1b[0m".into(), "unrelated".into(), "α alpha".into()];
+        let matches = search_matches(&lines, "ALPHA");
+        assert_eq!(matches, vec![
+            Match { row: 0, start: 0, end: 5 },
+            Match { row: 0, start: 6, end: 11 },
+            Match { row: 2, start: 3, end: 8 },
+        ]);
+        assert_eq!(step_match(0, matches.len(), true), 1);
+        assert_eq!(step_match(2, matches.len(), true), 0);
+        assert_eq!(step_match(0, matches.len(), false), 2);
+        assert_eq!(search_matches(&lines, "α"), vec![Match { row: 2, start: 0, end: 2 }]);
+        assert!(search_matches(&lines, "missing").is_empty());
     }
 
     #[test]
-    fn highlights_without_changing_visible_text_or_colors() {
-        let original = "\x1b[38;5;39mAlpha\x1b[0m and alpha";
-        let highlighted = highlight_matches(original, "alpha");
-        assert_eq!(plain_text(&highlighted), "Alpha and alpha");
-        assert_eq!(highlighted.matches("\x1b[7m").count(), 2);
-        assert!(highlighted.contains("\x1b[38;5;39m"));
+    fn highlights_selected_and_other_matches_without_changing_foreground_or_code_background() {
+        let colors = SearchColors { selected_bg: 226, other_bg: 0 };
+        let original = "\x1b[38;5;39;48;5;236mAlpha alpha\x1b[0m";
+        let highlighted = highlight_matches(original, "alpha", Some((0, 5)), colors);
+        assert_eq!(plain_text(&highlighted), "Alpha alpha");
+        assert!(highlighted.contains("\x1b[48;5;226mAlpha\x1b[48;5;236m"));
+        assert!(highlighted.contains("\x1b[48;5;0malpha\x1b[48;5;236m"));
+        assert!(highlighted.contains("\x1b[38;5;39;48;5;236m"));
     }
 }

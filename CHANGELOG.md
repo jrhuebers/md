@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Render display math inside blockquotes while retaining the quote bar and its indentation.
 - Search visible text in the built-in pager with `/`, highlight matches, and move through matching occurrences with `n`/`N`.
 - Configure selected and other search-match foregrounds and backgrounds per theme (`search_selected_fg`, `search_selected_bg`, `search_other_fg`, and `search_other_bg`); the tracked styles use black on orange for the selected match and black on yellow for the others.
+- Show a light-grey insertion caret in the built-in pager's `/` search prompt.
 
 ### Changed
 

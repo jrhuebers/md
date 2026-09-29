@@ -516,7 +516,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
     let percent = if max_offset == 0 { 100 } else { (offset * 100 / max_offset).min(100) };
     let edit_hint = if editable { "e edit  " } else { "" };
     let status = if let Some(input) = prompt {
-        format!("/{input}")
+        search_prompt_status(input, columns)
     } else if !query.is_empty() {
         let count = match_count.map(|(index, total)| format!("{index}/{total}"))
             .unwrap_or_else(|| "not found".to_string());
@@ -524,8 +524,12 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
     } else {
         format!(" md  {percent:>3}%  {}/{}  / search  n/N  ↑/↓ scroll  Space/b page  g/G  {edit_hint}q quit", offset + 1, total)
     };
-    let status = truncate_plain(&status, columns);
-    let status = format!("{status:<columns$}");
+    let status = if prompt.is_some() {
+        status
+    } else {
+        let status = truncate_plain(&status, columns);
+        format!("{status:<columns$}")
+    };
     screen.push_str("\x1b[7m");
     screen.push_str(&status);
     screen.push_str(RESET);
@@ -706,6 +710,23 @@ fn truncate_ansi(text: &str, width: usize) -> String {
     output
 }
 
+fn search_prompt_status(input: &str, columns: usize) -> String {
+    // Keep the insertion point visible even when the query exceeds the screen width.
+    let available = columns.saturating_sub(2);
+    let mut suffix = Vec::new();
+    let mut used = 0;
+    for character in input.chars().rev() {
+        let width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + width > available { break; }
+        suffix.push(character);
+        used += width;
+    }
+    suffix.reverse();
+    let visible: String = suffix.into_iter().collect();
+    let padding = columns.saturating_sub(used + 2);
+    format!("/{visible}\x1b[27;38;5;250;48;5;0m▌\x1b[7;39;49m{}", " ".repeat(padding))
+}
+
 fn truncate_plain(text: &str, width: usize) -> String {
     text.chars().take(width).collect()
 }
@@ -713,6 +734,16 @@ fn truncate_plain(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_prompt_shows_light_grey_caret_and_keeps_it_visible() {
+        let short = search_prompt_status("alpha", 20);
+        assert!(short.contains("/alpha\x1b[27;38;5;250;48;5;0m▌"));
+        assert_eq!(visible_width(&short), 20);
+        let long = search_prompt_status("abcdefghij", 6);
+        assert!(long.starts_with("/ghij\x1b[27;38;5;250;48;5;0m▌"));
+        assert_eq!(visible_width(&long), 6);
+    }
 
     #[test]
     fn searches_each_visible_occurrence_and_wraps_in_both_directions() {

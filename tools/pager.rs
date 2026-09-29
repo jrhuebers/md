@@ -1,3 +1,4 @@
+use regex::{Regex, RegexBuilder};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
@@ -106,6 +107,7 @@ where
     let mut total = lines.len().max(1);
     let mut offset = 0usize;
     let mut query = String::new();
+    let mut search_pattern: Option<Regex> = None;
     let mut prompt: Option<String> = None;
     let mut matches = Vec::new();
     let mut active_match: Option<usize> = None;
@@ -129,7 +131,7 @@ where
                 let content_width = if mouse_enabled { columns.saturating_sub(1).max(1) } else { columns };
                 rendered = rerender(content_width);
                 lines = collect_lines(&rendered);
-                matches = search_matches(&lines, &query);
+                matches = search_matches(&lines, search_pattern.as_ref());
                 active_match = None;
                 total = lines.len().max(1);
                 let new_max = total.saturating_sub(viewport);
@@ -150,7 +152,7 @@ where
         let max_offset = total.saturating_sub(viewport);
         offset = offset.min(max_offset);
         if dirty {
-            draw(&lines, offset, total, viewport, columns.max(2), editable, mouse_enabled, dragging.is_some() || hovered, clear_screen, &query, prompt.as_deref(), active_match.map(|index| (index + 1, matches.len())), active_match.map(|index| matches[index]), search_colors);
+            draw(&lines, offset, total, viewport, columns.max(2), editable, mouse_enabled, dragging.is_some() || hovered, clear_screen, &query, search_pattern.as_ref(), prompt.as_deref(), active_match.map(|index| (index + 1, matches.len())), active_match.map(|index| matches[index]), search_colors);
             dirty = false;
             clear_screen = false;
         }
@@ -165,7 +167,8 @@ where
                     let entered = prompt.take().unwrap_or_default();
                     if !entered.is_empty() {
                         query = entered;
-                        matches = search_matches(&lines, &query);
+                        search_pattern = compile_search(&query);
+                        matches = search_matches(&lines, search_pattern.as_ref());
                         active_match = (!matches.is_empty()).then(|| matches.partition_point(|item| item.row < offset) % matches.len());
                         if let Some(index) = active_match {
                             offset = matches[index].row.min(total.saturating_sub(viewport));
@@ -236,6 +239,7 @@ where
                 }
                 Key::Escape if !query.is_empty() => {
                     query.clear();
+                    search_pattern = None;
                     matches.clear();
                     active_match = None;
                     dirty = true;
@@ -256,18 +260,19 @@ fn collect_lines(rendered: &str) -> Vec<String> {
     rendered.lines().map(ToOwned::to_owned).collect()
 }
 
-fn search_matches(lines: &[String], query: &str) -> Vec<Match> {
-    if query.is_empty() { return Vec::new(); }
+fn compile_search(query: &str) -> Option<Regex> {
+    (!query.is_empty()).then(|| RegexBuilder::new(&regex::escape(query)).case_insensitive(true).build().ok()).flatten()
+}
+
+fn search_matches(lines: &[String], pattern: Option<&Regex>) -> Vec<Match> {
+    let Some(pattern) = pattern else { return Vec::new() };
     lines.iter().enumerate().flat_map(|(row, line)| {
-        match_ranges(&plain_text(line), query).into_iter().map(move |(start, end)| Match { row, start, end })
+        match_ranges(&plain_text(line), pattern).into_iter().map(move |(start, end)| Match { row, start, end })
     }).collect()
 }
 
-fn match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
-    if query.is_empty() { return Vec::new(); }
-    let needle = query.to_ascii_lowercase();
-    text.to_ascii_lowercase().match_indices(&needle)
-        .map(|(start, _)| (start, start + needle.len())).collect()
+fn match_ranges(text: &str, pattern: &Regex) -> Vec<(usize, usize)> {
+    pattern.find_iter(text).map(|found| (found.start(), found.end())).collect()
 }
 
 fn step_match(index: usize, total: usize, forward: bool) -> usize {
@@ -295,8 +300,9 @@ struct Intensity {
     dim: bool,
 }
 
-fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, colors: SearchColors) -> String {
-    let ranges = match_ranges(&plain_text(line), query);
+fn highlight_matches(line: &str, pattern: Option<&Regex>, selected: Option<(usize, usize)>, colors: SearchColors) -> String {
+    let Some(pattern) = pattern else { return line.to_string() };
+    let ranges = match_ranges(&plain_text(line), pattern);
     if ranges.is_empty() { return line.to_string(); }
     let mut result = String::new();
     let mut chars = line.chars();
@@ -477,7 +483,7 @@ fn scrollbar_offset(row: usize, viewport: usize, total: usize) -> usize {
     }
 }
 
-fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, mouse_enabled: bool, dragging: bool, clear_screen: bool, query: &str, prompt: Option<&str>, match_count: Option<(usize, usize)>, selected: Option<Match>, colors: SearchColors) {
+fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns: usize, editable: bool, mouse_enabled: bool, dragging: bool, clear_screen: bool, query: &str, pattern: Option<&Regex>, prompt: Option<&str>, match_count: Option<(usize, usize)>, selected: Option<Match>, colors: SearchColors) {
     let content_width = if mouse_enabled { columns.saturating_sub(1).max(1) } else { columns };
     let thumb_size = if total <= viewport {
         viewport
@@ -499,7 +505,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
     for row in 0..viewport {
         let line = lines.get(offset + row).map(String::as_str).unwrap_or("");
         let selected_range = selected.filter(|item| item.row == offset + row).map(|item| (item.start, item.end));
-        let content = truncate_ansi(&highlight_matches(line, query, selected_range, colors), content_width);
+        let content = truncate_ansi(&highlight_matches(line, pattern, selected_range, colors), content_width);
         screen.push_str(&content);
         let used = visible_width(&content);
         screen.push_str(&" ".repeat(content_width.saturating_sub(used)));
@@ -748,7 +754,7 @@ mod tests {
     #[test]
     fn searches_each_visible_occurrence_and_wraps_in_both_directions() {
         let lines = vec!["\x1b[1mAlpha alpha\x1b[0m".into(), "unrelated".into(), "α alpha".into()];
-        let matches = search_matches(&lines, "ALPHA");
+        let matches = search_matches(&lines, compile_search("ALPHA").as_ref());
         assert_eq!(matches, vec![
             Match { row: 0, start: 0, end: 5 },
             Match { row: 0, start: 6, end: 11 },
@@ -757,15 +763,26 @@ mod tests {
         assert_eq!(step_match(0, matches.len(), true), 1);
         assert_eq!(step_match(2, matches.len(), true), 0);
         assert_eq!(step_match(0, matches.len(), false), 2);
-        assert_eq!(search_matches(&lines, "α"), vec![Match { row: 2, start: 0, end: 2 }]);
-        assert!(search_matches(&lines, "missing").is_empty());
+        assert_eq!(search_matches(&lines, compile_search("α").as_ref()), vec![Match { row: 2, start: 0, end: 2 }]);
+        assert!(search_matches(&lines, compile_search("missing").as_ref()).is_empty());
+    }
+
+    #[test]
+    fn case_insensitive_search_is_unicode_aware_and_literal() {
+        let lines = vec!["École école Σ σ ς".into(), "a.b aXb".into()];
+        let accents = search_matches(&lines, compile_search("éCOLE").as_ref());
+        assert_eq!(accents, vec![Match { row: 0, start: 0, end: 6 }, Match { row: 0, start: 7, end: 13 }]);
+        let sigma = search_matches(&lines, compile_search("σ").as_ref());
+        assert_eq!(sigma.len(), 3, "uppercase, lowercase, and final sigma should match");
+        assert_eq!(search_matches(&lines, compile_search("a.b").as_ref()), vec![Match { row: 1, start: 0, end: 3 }]);
+        assert!(compile_search("").is_none());
     }
 
     #[test]
     fn highlights_selected_and_other_matches_and_restores_original_colors() {
         let colors = SearchColors { selected_bg: 226, selected_fg: 0, other_bg: 0, other_fg: 15 };
         let original = "\x1b[38;5;39;48;5;236mAlpha alpha\x1b[0m";
-        let highlighted = highlight_matches(original, "alpha", Some((0, 5)), colors);
+        let highlighted = highlight_matches(original, compile_search("alpha").as_ref(), Some((0, 5)), colors);
         assert_eq!(plain_text(&highlighted), "Alpha alpha");
         assert!(highlighted.contains("\x1b[22;38;5;0;48;5;226mAlpha\x1b[22m\x1b[38;5;39m\x1b[48;5;236m"));
         assert!(highlighted.contains("\x1b[22;38;5;15;48;5;0malpha\x1b[22m\x1b[38;5;39m\x1b[48;5;236m"));
@@ -775,7 +792,7 @@ mod tests {
     fn search_white_is_not_dimmed_by_blockquotes_and_original_intensity_returns() {
         let colors = SearchColors { selected_bg: 226, selected_fg: 0, other_bg: 0, other_fg: 15 };
         let line = "\x1b[1;2m│ text text\x1b[0m";
-        let highlighted = highlight_matches(line, "text", Some((9, 13)), colors);
+        let highlighted = highlight_matches(line, compile_search("text").as_ref(), Some((9, 13)), colors);
         assert!(highlighted.contains("\x1b[22;38;5;15;48;5;0mtext\x1b[22m\x1b[1m\x1b[2m"));
         assert!(highlighted.contains("\x1b[22;38;5;0;48;5;226mtext\x1b[22m\x1b[1m\x1b[2m"));
     }
@@ -784,7 +801,7 @@ mod tests {
     fn reasserts_search_colors_after_embedded_style_changes() {
         let colors = SearchColors { selected_bg: 201, selected_fg: 16, other_bg: 24, other_fg: 231 };
         let line = "\x1b[38;5;39mAl\x1b[38;2;4;5;6mpha\x1b[0m";
-        let highlighted = highlight_matches(line, "alpha", Some((0, 5)), colors);
+        let highlighted = highlight_matches(line, compile_search("alpha").as_ref(), Some((0, 5)), colors);
         assert!(highlighted.contains("\x1b[38;2;4;5;6m\x1b[22;38;5;16;48;5;201mpha"));
         assert!(highlighted.contains("pha\x1b[22m\x1b[38;2;4;5;6m\x1b[49m"));
     }

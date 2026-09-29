@@ -48,7 +48,7 @@ Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
 `max_line_length` limits the Markdown content column and centers it when the
 terminal is wider; it defaults to 100, while `0` follows the available width.
 `pager: builtin` selects the built-in pager (arrow keys or `j`/`k` to scroll,
-Space/`b` to page, `g`/`G` to jump, `/` to search (Enter to confirm, Esc to cancel), `n`/`N` to move to the next/previous occurrence, Esc to clear an active search, `q` to quit, and `e` to edit and reload a single file). Search matches are highlighted in visible rendered text, ignoring ANSI styling. Set `search_selected_fg`/`search_selected_bg` and `search_other_fg`/`search_other_bg` in each style block to 256-color indices; the tracked styles use black (0) on orange (208) for the active match and black (0) on yellow (226) for the others. An external pager command such as `less -R` is also supported;
+Space/`b` to page, `g`/`G` to jump, `/` to search (Enter to confirm, Esc to cancel), `n`/`N` to move to the next/previous occurrence, Esc to clear an active search, `q` to quit, and `e` to edit and reload a single file). Search is literal and Unicode case-insensitive; matches are highlighted in visible rendered text, ignoring ANSI styling. Set `search_selected_fg`/`search_selected_bg` and `search_other_fg`/`search_other_bg` in each style block to 256-color indices; the tracked styles use black (0) on orange (208) for the active match and black (0) on yellow (226) for the others. An external pager command such as `less -R` is also supported;
 `$PAGER` overrides either choice when set.
 
 Add or adjust a style block under `styles:` using the color fields and margin

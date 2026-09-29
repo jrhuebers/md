@@ -2,19 +2,25 @@
 //! Node bridge. The Rust fallback keeps md usable when Node is unavailable.
 
 use std::env;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{atomic::{AtomicBool, Ordering}, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 struct PiBridge {
-    _child: Child,
+    child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdout: ChildStdout,
 }
 
 static PI_BRIDGE: OnceLock<Mutex<Option<PiBridge>>> = OnceLock::new();
 static RENDER_LATEX: AtomicBool = AtomicBool::new(true);
+static RESTART_AFTER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+const BRIDGE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_REQUEST_BYTES: usize = 4096;
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 pub fn set_enabled(enabled: bool) {
     RENDER_LATEX.store(enabled, Ordering::Relaxed);
@@ -22,6 +28,15 @@ pub fn set_enabled(enabled: bool) {
 
 pub fn enabled() -> bool {
     RENDER_LATEX.load(Ordering::Relaxed)
+}
+
+pub fn shutdown() {
+    if let Some(state) = PI_BRIDGE.get() {
+        if let Ok(mut bridge) = state.lock() {
+            stop_bridge(&mut bridge);
+            RESTART_AFTER_SHUTDOWN.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 pub fn render_inline(source: &str) -> String {
@@ -44,18 +59,26 @@ pub fn render_display(source: &str) -> Vec<String> {
 fn pi_render(source: &str, display: bool) -> Option<String> {
     let bridge = PI_BRIDGE.get_or_init(|| Mutex::new(start_bridge()));
     let mut state = bridge.lock().ok()?;
+    if RESTART_AFTER_SHUTDOWN.swap(false, Ordering::Relaxed) && state.is_none() {
+        *state = start_bridge();
+    }
     let bridge = state.as_mut()?;
     let request = format!("{{\"display\":{},\"source\":\"{}\"}}\n", display, json_escape(source));
+    // Keep writes below the minimum POSIX pipe capacity, even if the helper stalls.
+    if request.len() > MAX_REQUEST_BYTES {
+        return None;
+    }
     if bridge.stdin.write_all(request.as_bytes()).is_err() || bridge.stdin.flush().is_err() {
-        *state = None;
+        stop_bridge(&mut state);
         return None;
     }
-    let mut response = String::new();
-    if bridge.stdout.read_line(&mut response).ok()? == 0 {
-        *state = None;
-        return None;
+    match read_response(&mut bridge.stdout) {
+        Ok(response) => parse_result(&response),
+        Err(_) => {
+            stop_bridge(&mut state);
+            None
+        }
     }
-    parse_result(&response)
 }
 
 fn start_bridge() -> Option<PiBridge> {
@@ -79,14 +102,60 @@ fn start_bridge() -> Option<PiBridge> {
         .arg(helper)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::null())
         .spawn()
         .ok()?;
     Some(PiBridge {
         stdin: child.stdin.take()?,
-        stdout: BufReader::new(child.stdout.take()?),
-        _child: child,
+        stdout: child.stdout.take()?,
+        child,
     })
+}
+
+fn stop_bridge(state: &mut Option<PiBridge>) {
+    if let Some(mut bridge) = state.take() {
+        let _ = bridge.child.kill();
+        let _ = bridge.child.wait();
+    }
+}
+
+fn read_response(stdout: &mut ChildStdout) -> io::Result<String> {
+    let deadline = Instant::now() + BRIDGE_TIMEOUT;
+    let mut response = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "math helper did not respond"));
+        }
+        let mut fd = libc::pollfd { fd: stdout.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let timeout = remaining.as_millis().max(1).min(i32::MAX as u128) as i32;
+        let ready = unsafe { libc::poll(&mut fd, 1, timeout) };
+        if ready < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(io::Error::last_os_error());
+        }
+        if ready == 0 {
+            continue;
+        }
+        if fd.revents & libc::POLLIN == 0 {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "math helper closed its output"));
+        }
+        let mut chunk = [0; 4096];
+        let count = stdout.read(&mut chunk)?;
+        if count == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "math helper closed its output"));
+        }
+        response.extend_from_slice(&chunk[..count]);
+        if response.len() > MAX_RESPONSE_BYTES {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "math helper response too large"));
+        }
+        if let Some(end) = response.iter().position(|byte| *byte == b'\n') {
+            return String::from_utf8(response[..end].to_vec())
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+        }
+    }
 }
 
 fn json_escape(value: &str) -> String {

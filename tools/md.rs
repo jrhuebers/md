@@ -5,10 +5,17 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{FontStyle, ThemeSet};
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
+use unicode_width::UnicodeWidthStr;
 
 mod math;
+mod pager;
 
 // The built-in defaults mirror Glamour's LightStyle and DarkStyle, which Glow uses.
 #[derive(Clone)]
@@ -147,6 +154,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let editable_path = if paths.len() == 1 && paths[0] != "-" { Some(Path::new(&paths[0])) } else { None };
     loop {
         let input = match read_input(&paths) {
             Ok(input) => input,
@@ -155,12 +163,31 @@ fn main() {
                 std::process::exit(2);
             }
         };
+        let built_in = env::var("PAGER").unwrap_or_else(|_| pager.clone()) == "builtin";
         let rendered = render_document(&input, &theme, width, max_line_length);
-        if let Err(error) = page(&rendered, &pager) {
-            eprintln!("md: {error}");
-            std::process::exit(1);
+        // Do not leave the math helper attached to the terminal while the pager runs.
+        math::shutdown();
+        let result = if built_in {
+            pager::run(&rendered, editable_path.is_some(), 60, 2, false, |_| rendered.clone())
+            .map(|action| matches!(action, pager::Action::Edit))
+        } else {
+            page(&rendered, &pager).map(|_| false)
+        };
+        match result {
+            Ok(true) => {
+                if let Some(path) = editable_path {
+                    if let Err(error) = run_editor(path) {
+                        eprintln!("md: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Ok(false) => break,
+            Err(error) => {
+                eprintln!("md: {error}");
+                std::process::exit(1);
+            }
         }
-        break;
     }
 }
 
@@ -355,7 +382,8 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     let mut in_frontmatter = has_frontmatter;
     let mut frontmatter_opening = has_frontmatter;
     let mut in_code = false;
-    let mut math_block: Option<(String, String, String)> = None;
+    let mut code_highlighter = None;
+    let mut math_block: Option<(String, String, String, bool)> = None;
     let mut previous_block: Option<BlockKind> = None;
     let mut suppress_blank = false;
 
@@ -385,7 +413,14 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
         if is_fence(trimmed) {
             previous_block = None;
             flush_paragraph(&mut paragraph, &mut output, theme, width);
-            in_code = !in_code;
+            if in_code {
+                in_code = false;
+                code_highlighter = None;
+            } else {
+                in_code = true;
+                code_highlighter = fence_language(trimmed)
+                    .and_then(|language| make_code_highlighter(language, theme));
+            }
             continue;
         }
         if in_code {
@@ -394,27 +429,43 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             let code_width = 2 + visible_width(line);
             let mut rendered = code_style(theme);
             rendered.push_str("  ");
-            rendered.push_str(line);
+            if let Some(highlighter) = code_highlighter.as_mut() {
+                rendered.push_str(&highlight_code_line(line, highlighter, theme));
+                rendered.push_str(&code_style(theme));
+            } else {
+                rendered.push_str(line);
+            }
             rendered.push_str(&" ".repeat(content_width.saturating_sub(code_width)));
             rendered.push_str(RESET);
             push_line(&mut output, &rendered, theme);
             continue;
         }
-        if let Some((_, closing, _)) = math_block.as_ref() {
-            previous_block = None;
-            let closing = closing.clone();
-            if let Some(end) = line.find(closing.as_str()) {
-                if let Some((opening, _, mut body)) = math_block.take() {
-                    body.push_str(&line[..end]);
-                    push_math_display(&mut output, &opening, &closing, &body, theme, width);
+        if let Some((_, closing, _, quoted)) = math_block.as_ref() {
+            let quoted = *quoted;
+            let content = if quoted { quote_content(trimmed) } else { Some(line) };
+            if let Some(content) = content {
+                previous_block = if quoted { Some(BlockKind::Quote) } else { None };
+                let closing = closing.clone();
+                if let Some(end) = content.find(closing.as_str()) {
+                    if let Some((opening, _, mut body, _)) = math_block.take() {
+                        if !body.is_empty() {
+                            body.push('\n');
+                        }
+                        body.push_str(&content[..end]);
+                        push_math_display(&mut output, &opening, &closing, &body, quoted, theme, width);
+                    }
+                } else if let Some((_, _, body, _)) = math_block.as_mut() {
+                    if !body.is_empty() {
+                        body.push('\n');
+                    }
+                    body.push_str(content);
                 }
-            } else if let Some((_, _, body)) = math_block.as_mut() {
-                if !body.is_empty() {
-                    body.push('\n');
-                }
-                body.push_str(line);
+                continue;
             }
-            continue;
+            // A quote ended without its closing delimiter; do not consume the next block.
+            if let Some((opening, closing, body, _)) = math_block.take() {
+                push_math_display(&mut output, &opening, &closing, &body, true, theme, width);
+            }
         }
         if line.trim().is_empty() {
             previous_block = None;
@@ -455,9 +506,9 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             let rest = &trimmed[body_start..];
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             if let Some(end) = rest.find(closing) {
-                push_math_display(&mut output, opening, closing, &rest[..end], theme, width);
+                push_math_display(&mut output, opening, closing, &rest[..end], false, theme, width);
             } else {
-                math_block = Some((opening.to_string(), closing.to_string(), rest.to_string()));
+                math_block = Some((opening.to_string(), closing.to_string(), rest.to_string(), false));
             }
             continue;
         }
@@ -516,7 +567,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             }
             continue;
         }
-        if let Some(content) = trimmed.strip_prefix("> ").or_else(|| trimmed.strip_prefix('>')) {
+        if let Some(content) = quote_content(trimmed) {
             if previous_block != Some(BlockKind::Quote) {
                 flush_paragraph(&mut paragraph, &mut output, theme, width);
                 ensure_blank_line(&mut output, theme);
@@ -524,6 +575,16 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
                 flush_paragraph(&mut paragraph, &mut output, theme, width);
             }
             previous_block = Some(BlockKind::Quote);
+            let content = content.trim();
+            if let Some((opening, closing)) = display_math_delimiter(content) {
+                let rest = &content[opening.len()..];
+                if let Some(end) = rest.find(closing) {
+                    push_math_display(&mut output, opening, closing, &rest[..end], true, theme, width);
+                } else {
+                    math_block = Some((opening.to_string(), closing.to_string(), rest.to_string(), true));
+                }
+                continue;
+            }
             let prefix_width = 2;
             let available = width.saturating_sub(theme.margin_left + theme.margin_right + prefix_width).max(1);
             for chunk in wrap_text(content.trim(), available).iter() {
@@ -541,11 +602,15 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
     }
 
     flush_paragraph(&mut paragraph, &mut output, theme, width);
-    if let Some((opening, closing, body)) = math_block {
-        push_math_display(&mut output, &opening, &closing, &body, theme, width);
+    if let Some((opening, closing, body, quoted)) = math_block {
+        push_math_display(&mut output, &opening, &closing, &body, quoted, theme, width);
     }
     ensure_blank_line(&mut output, theme);
     output
+}
+
+fn quote_content(line: &str) -> Option<&str> {
+    line.strip_prefix("> ").or_else(|| line.strip_prefix('>'))
 }
 
 fn display_math_delimiter(line: &str) -> Option<(&str, &str)> {
@@ -558,21 +623,38 @@ fn display_math_delimiter(line: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn push_math_display(output: &mut String, opening: &str, closing: &str, source: &str, theme: &Theme, width: usize) {
-    ensure_blank_line(output, theme);
+fn push_math_display(output: &mut String, opening: &str, closing: &str, source: &str, quoted: bool, theme: &Theme, width: usize) {
+    if quoted {
+        push_quote_blank(output, theme);
+    } else {
+        ensure_blank_line(output, theme);
+    }
     let lines: Vec<String> = if math::enabled() {
         math::render_display(source)
     } else {
         format!("{opening}{source}{closing}").lines().map(ToOwned::to_owned).collect()
     };
-    let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
-    let block_width = lines.iter().map(|line| line.chars().count()).max().unwrap_or(0);
+    let content_width = width.saturating_sub(theme.margin_left + theme.margin_right + if quoted { 2 } else { 0 });
+    let block_width = lines.iter().map(|line| UnicodeWidthStr::width(line.as_str())).max().unwrap_or(0);
     let padding = content_width.saturating_sub(block_width) / 2;
     for line in lines {
-        let rendered = format!("{}{}{}{}", fg(theme.normal_fg), " ".repeat(padding), line, RESET);
+        let prefix = if quoted { "│ " } else { "" };
+        let rendered = format!("{}{}{}{}{}{}", fg(theme.normal_fg), if quoted { DIM } else { "" }, prefix, " ".repeat(padding), line, RESET);
         push_line(output, &rendered, theme);
     }
-    ensure_blank_line(output, theme);
+    if quoted {
+        push_quote_blank(output, theme);
+    } else {
+        ensure_blank_line(output, theme);
+    }
+}
+
+fn push_quote_blank(output: &mut String, theme: &Theme) {
+    let rendered = format!("{}{}│ {}", fg(theme.normal_fg), DIM, RESET);
+    let blank = format!("{}{}{}\n", " ".repeat(theme.margin_left), rendered, " ".repeat(theme.margin_right));
+    if !output.ends_with(&blank) {
+        output.push_str(&blank);
+    }
 }
 
 fn flush_paragraph(paragraph: &mut Vec<String>, output: &mut String, theme: &Theme, width: usize) {
@@ -1095,6 +1177,55 @@ fn is_fence(line: &str) -> bool {
 
 fn code_style(theme: &Theme) -> String {
     style(theme.inline_code_fg, Some(theme.inline_code_bg), false, false, false)
+}
+
+fn fence_language(fence: &str) -> Option<&str> {
+    let marker = if fence.starts_with('~') { "~~~" } else { "```" };
+    fence.strip_prefix(marker)?.split_whitespace().next().filter(|language| !language.is_empty())
+}
+
+fn make_code_highlighter(language: &str, theme: &Theme) -> Option<HighlightLines<'static>> {
+    static THEMES: OnceLock<ThemeSet> = OnceLock::new();
+    let syntaxes = syntax_set();
+    let themes = THEMES.get_or_init(ThemeSet::load_defaults);
+    let syntax = syntaxes.find_syntax_by_token(language)?;
+    let theme_name = if theme.inline_code_bg > 240 { "InspiredGitHub" } else { "base16-ocean.dark" };
+    let syntax_theme = themes.themes.get(theme_name)?;
+    Some(HighlightLines::new(syntax, syntax_theme))
+}
+
+fn highlight_code_line(line: &str, highlighter: &mut HighlightLines<'static>, theme: &Theme) -> String {
+    let input = format!("{line}\n");
+    let Some(input_line) = LinesWithEndings::from(&input).next() else {
+        return line.to_string();
+    };
+    let Ok(ranges) = highlighter.highlight_line(input_line, syntax_set()) else {
+        return line.to_string();
+    };
+    let mut rendered = String::with_capacity(line.len() + ranges.len() * 24);
+    for (syntax_style, text) in ranges {
+        let text = text.strip_suffix('\n').unwrap_or(text);
+        let color = syntax_style.foreground;
+        rendered.push_str(&format!("\x1b[38;2;{};{};{}m", color.r, color.g, color.b));
+        if syntax_style.font_style.contains(FontStyle::BOLD) {
+            rendered.push_str(BOLD);
+        }
+        if syntax_style.font_style.contains(FontStyle::ITALIC) {
+            rendered.push_str(ITALIC);
+        }
+        if syntax_style.font_style.contains(FontStyle::UNDERLINE) {
+            rendered.push_str(UNDERLINE);
+        }
+        rendered.push_str(text);
+        rendered.push_str(RESET);
+        rendered.push_str(&code_style(theme));
+    }
+    rendered
+}
+
+fn syntax_set() -> &'static SyntaxSet {
+    static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
+    SYNTAXES.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
 fn render_rule(theme: &Theme, width: usize) -> String {
@@ -1661,6 +1792,8 @@ mod tests {
         assert_eq!(Config::default().pager, "less -R");
         let config = parse_config("pager: more -R\n").expect("pager config should parse");
         assert_eq!(config.pager, "more -R");
+        let config = parse_config("pager: builtin\n").expect("built-in pager config should parse");
+        assert_eq!(config.pager, "builtin");
     }
 
     #[test]
@@ -1683,6 +1816,71 @@ mod tests {
         let styled_code = format!("{}  first{}{}", code_style(&theme), " ".repeat(71), RESET);
         assert!(rendered.contains(&styled_code));
         assert!(rendered.contains(&format!("{}  second{}{}", code_style(&theme), " ".repeat(70), RESET)));
+    }
+
+    #[test]
+    fn highlights_known_fenced_languages_and_preserves_source_text() {
+        let rendered = render_document("```bash\necho \"$HOME\"\n```", &Theme::glow_dark(), 80, 0);
+        assert!(rendered.contains("\x1b[38;2;"));
+        assert!(rendered.contains("echo"));
+        assert!(rendered.contains("$"));
+        assert!(rendered.contains("HOME"));
+        assert!(!rendered.contains("```"));
+    }
+
+    #[test]
+    fn renders_display_math_inside_a_blockquote() {
+        let input = "> Quoted $x^2$.\n> $$\n> x^2 + y^2\n> $$\n> Afterward.\n\nOutside.";
+        let rendered = render_document(input, &Theme::glow_dark(), 60, 0);
+        assert!(!rendered.contains("$$"));
+        assert!(rendered.lines().any(|line| line.contains("│ ") && line.contains("x² + y²")));
+        assert!(rendered.lines().any(|line| line.contains("│ ") && line.contains("Afterward.")));
+        assert!(rendered.lines().any(|line| line.contains("Outside.") && !line.contains('│')));
+    }
+
+    #[test]
+    fn aligns_matrix_rows_with_invisible_source_separators() {
+        let zwsp = "\u{200b}";
+        let source = format!(
+            "\\tilde D_\\ell{zwsp} = \\begin{{pmatrix}} 0 & D_\\ell \\\\{zwsp}{zwsp}D_\\ell^\\top & {zwsp}0{zwsp} \\end{{pmatrix}}"
+        );
+        let lines = math::render_display(&source);
+        assert_eq!(lines.len(), 2);
+        assert!(!lines.iter().any(|line| line.contains(zwsp)));
+        for (upper, lower) in [('⎛', '⎝'), ('│', '│'), ('⎞', '⎠')] {
+            let position = |line: &str, symbol: char| {
+                UnicodeWidthStr::width(&line[..line.find(symbol).expect("matrix symbol")])
+            };
+            assert_eq!(position(&lines[0], upper), position(&lines[1], lower), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn keeps_a_space_before_display_limit_operators() {
+        for operator in ["lim", "limsup"] {
+            let source = format!("\\lambda_k = \\{operator}_{{n \\to \\infty}} \\frac{{1}}{{n}} \\log n");
+            let lines = math::render_display(&source);
+            assert!(lines.iter().any(|line| line.contains(&format!("= {operator}"))), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn aligns_a_fraction_after_a_combining_accent() {
+        let lines = math::render_display("\\bar a^{(\\ell)} = \\frac1N \\sum_{i=1}^{N} a_i^{(\\ell)}.");
+        assert_eq!(lines.len(), 3);
+        let column = |line: &str, character: char| {
+            let byte = line.find(character).expect("expected fraction character");
+            UnicodeWidthStr::width(&line[..byte])
+        };
+        assert_eq!(column(&lines[0], '1'), column(&lines[1], '─'));
+        assert_eq!(column(&lines[1], '─'), column(&lines[2], 'N'));
+    }
+
+    #[test]
+    fn renders_bracketed_math_inside_a_blockquote() {
+        let rendered = render_document("> Before.\n> \\[\n> x^2\n> \\]\n> After.", &Theme::glow_light(), 50, 0);
+        assert!(!rendered.contains("\\["));
+        assert!(rendered.lines().any(|line| line.contains("│ ") && line.contains("x²")));
     }
 
     #[test]

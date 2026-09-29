@@ -6,10 +6,11 @@ personal dotfiles repository.
 
 ## Build and install
 
-Build the native binary with:
+Build and install the native binary with Cargo:
 
 ```sh
-rustc -O -C strip=symbols tools/md.rs -o ~/.local/bin/md
+cargo build --release --locked
+install -Dm755 target/release/md ~/.local/bin/md
 ```
 
 Deploy the tracked configuration with:

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Highlight fenced code blocks by language with Syntect, using the active light or dark style.
+- Render display math inside blockquotes while retaining the quote bar and its indentation.
+
+### Changed
+
+- Build with Cargo to include Syntect syntax definitions and themes.
+- Restore the built-in pager in the tracked configuration while preserving external pager and `$PAGER` support.
+
+### Fixed
+
+- Time out stalled LaTeX helper responses and fall back to the Rust renderer instead of blocking the viewer.
+- Stop the LaTeX helper before opening the external pager, so it cannot hold terminal descriptors during pager use.
+- Align stacked fractions correctly after combining accents such as the overbar in `a̅`.
+- Preserve spacing before stacked limit operators (`lim`, `limsup`, etc.) in display math.
+- Ignore invisible word separators in math source so multirow matrices and fractions stay aligned.
+
 ## [0.6.43] - 2026-09-27
 
 ### Changed

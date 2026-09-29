@@ -1,5 +1,6 @@
 function visibleWidth(value) {
-    return Array.from(value).length;
+    // Combining accents and invisible formatting characters occupy no terminal cell.
+    return Array.from(value).filter((character) => !/[\p{Mark}\p{Cf}]/u.test(character)).length;
 }
 const SYMBOLS = {
     alpha: "α",
@@ -698,8 +699,9 @@ function renderLayout(source, nodes) {
                 const trimmed = (previousNode ? sliced.trimStart() : sliced).trimEnd();
                 const preserveLeadingSpace = previousNode?.type === "matrix" && /^\s/.test(sliced);
                 const preserveTrailingSpace = node.type === "matrix" && /\s$/.test(sliced);
+                const preserveOperatorSpace = node.type === "operator" && /\s$/.test(sliced);
                 const text = trimmed
-                    ? `${preserveLeadingSpace ? " " : ""}${trimmed}${preserveTrailingSpace ? " " : ""}`
+                    ? `${preserveLeadingSpace ? " " : ""}${trimmed}${preserveTrailingSpace || preserveOperatorSpace ? " " : ""}`
                     : preserveLeadingSpace || preserveTrailingSpace
                         ? " "
                         : "";
@@ -1361,6 +1363,9 @@ class LatexParser {
  * Returns undefined when the expression contains unsupported or malformed syntax.
  */
 export function renderLatex(source, options = {}) {
+    // Imported Markdown can contain invisible word separators within math.
+    // They are not TeX spacing and must not affect matrix or fraction layout.
+    source = source.replace(/[\u200b\u2060\ufeff]/g, "");
     const layoutNodes = [];
     const rendered = new LatexParser(source, layoutNodes, options.display === true).render();
     if (rendered === undefined) {

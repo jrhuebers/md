@@ -1,9 +1,9 @@
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::process::Command;
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::thread;
 use std::time::Duration;
+use unicode_width::UnicodeWidthChar;
 
 const RESET: &str = "\x1b[0m";
 
@@ -88,8 +88,7 @@ where
     let mut dirty = true;
     let mut clear_screen = true;
     let mut last_size: Option<(usize, usize)> = None;
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || input_thread(sender));
+    let mut stdin = File::open("/dev/tty")?;
     let poll_interval = Duration::from_millis((1000 / poll_speed.max(1)) as u64);
     let scroll_step = scroll_step.max(1);
 
@@ -128,8 +127,8 @@ where
             clear_screen = false;
         }
 
-        match receiver.recv_timeout(poll_interval) {
-            Ok(key) => match key {
+        match read_key_timeout(&mut stdin, poll_interval)? {
+            Some(key) => match key {
                 Key::Up => {
                     let next = offset.saturating_sub(scroll_step);
                     dirty |= next != offset;
@@ -179,8 +178,7 @@ where
                     offset = next;
                 }
             },
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return Ok(Action::Done),
+            None => {},
         }
     }
 }
@@ -189,14 +187,15 @@ fn collect_lines(rendered: &str) -> Vec<String> {
     rendered.lines().map(ToOwned::to_owned).collect()
 }
 
-fn input_thread(sender: Sender<Key>) {
-    let mut stdin = io::stdin();
+fn read_key_timeout(stdin: &mut File, timeout: Duration) -> io::Result<Option<Key>> {
+    let mut fd = PollFd { fd: stdin.as_raw_fd(), events: 1, revents: 0 };
     loop {
-        match read_key(&mut stdin) {
-            Ok(Some(key)) if sender.send(key).is_err() => return,
-            Ok(Some(_)) => {}
-            Ok(None) => {}
-            Err(_) => return,
+        let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+        match unsafe { poll(&mut fd, 1, millis) } {
+            0 => return Ok(None),
+            n if n > 0 => return read_key(stdin),
+            _ if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => continue,
+            _ => return Err(io::Error::last_os_error()),
         }
     }
 }
@@ -332,7 +331,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
     let _ = io::stdout().flush();
 }
 
-fn read_key(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
+fn read_key(stdin: &mut File) -> io::Result<Option<Key>> {
     let mut byte = [0u8; 1];
     if stdin.read(&mut byte)? == 0 {
         return Ok(None);
@@ -354,7 +353,7 @@ fn read_key(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
     Ok(key)
 }
 
-fn read_escape(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
+fn read_escape(stdin: &mut File) -> io::Result<Option<Key>> {
     let mut byte = [0u8; 1];
     if !read_byte_timeout(stdin, &mut byte)? {
         return Ok(None);
@@ -403,7 +402,7 @@ fn read_escape(stdin: &mut io::Stdin) -> io::Result<Option<Key>> {
 
 // VMIN=1 keeps other terminal readers from treating a timeout as EOF.
 // Poll only while completing escape sequences so a lone Escape does not block.
-fn read_byte_timeout(stdin: &mut io::Stdin, byte: &mut [u8; 1]) -> io::Result<bool> {
+fn read_byte_timeout(stdin: &mut File, byte: &mut [u8; 1]) -> io::Result<bool> {
     let mut fd = PollFd { fd: stdin.as_raw_fd(), events: 1, revents: 0 };
     loop {
         match unsafe { poll(&mut fd, 1, 100) } {
@@ -453,7 +452,7 @@ fn visible_width(text: &str) -> usize {
         } else if character == '\x1b' {
             escape = true;
         } else {
-            width += 1;
+            width += UnicodeWidthChar::width(character).unwrap_or(0);
         }
     }
     width
@@ -472,9 +471,9 @@ fn truncate_ansi(text: &str, width: usize) -> String {
                     break;
                 }
             }
-        } else if used < width {
+        } else if used + UnicodeWidthChar::width(character).unwrap_or(0) <= width {
             output.push(character);
-            used += 1;
+            used += UnicodeWidthChar::width(character).unwrap_or(0);
         } else {
             break;
         }

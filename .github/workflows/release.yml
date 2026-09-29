@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build
-        run: rustc -O -C strip=symbols tools/md.rs -o md
+        run: cargo build --release --locked
 
       - name: Package
         env:
@@ -24,7 +24,7 @@ jobs:
           set -eu
           target="md-${VERSION}-x86_64-unknown-linux-gnu"
           mkdir -p "dist/${target}/bin" "dist/${target}/share/md/tools" "dist/${target}/share/md/vendor/pi-tui"
-          install -m 755 md "dist/${target}/bin/md"
+          install -m 755 target/release/md "dist/${target}/bin/md"
           install -m 644 tools/pi-math.mjs "dist/${target}/share/md/tools/pi-math.mjs"
           install -m 644 vendor/pi-tui/latex.js "dist/${target}/share/md/vendor/pi-tui/latex.js"
           install -m 644 vendor/pi-tui/NOTICE "dist/${target}/share/md/vendor/pi-tui/NOTICE"

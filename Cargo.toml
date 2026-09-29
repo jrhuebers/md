@@ -1,0 +1,13 @@
+[package]
+name = "md"
+version = "0.6.43"
+edition = "2021"
+
+[[bin]]
+name = "md"
+path = "tools/md.rs"
+
+[dependencies]
+libc = "0.2"
+unicode-width = "0.2"
+syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }

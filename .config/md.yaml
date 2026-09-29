@@ -7,8 +7,9 @@ width: 0
 max_line_length: 100
 # Translate supported LaTeX math to terminal Unicode.
 render_latex: true
-# Pager command; $PAGER overrides this value when set.
-pager: less -R
+# "builtin" uses md's pager; external commands (e.g. less -R) also work.
+# $PAGER overrides this value when set.
+pager: builtin
 
 styles:
   md-light:

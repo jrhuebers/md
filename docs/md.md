@@ -1,28 +1,24 @@
 # md
 
-`md` is a small compiled Markdown viewer for terminal use. It renders Markdown
-and sends it to a pager; it has no Glow dependency.
+`md` is a small compiled Markdown viewer for terminal use. It renders Markdown and sends it to a pager; fenced code blocks are highlighted with Syntect, without a Glow runtime dependency.
 
 The configuration is `~/.config/md.yaml`, normally a symlink to the tracked
-`.config/md.yaml`. It contains named style blocks and a root-level `style`
-selection. The included `md-light`, `glow-light`, and `glow-dark` styles use
-Glow/Glamour colors; inline code and fenced code share the same foreground and
-background style, with fenced code filling the content column as a rectangle and preserving each source line. `margin_left` and `margin_right` are independently
-configurable; both default to one space. YAML frontmatter delimited by `---` is
-shown with full-width rules and preserves one rendered line per source line.
+`.config/md.yaml`. It contains named style blocks and a root-level `style` selection. The included `md-light`, `glow-light`, and `glow-dark` styles use Glow/Glamour colors; inline code and fenced code share a background, while recognized fenced languages receive Syntect foreground colors and font styles. Fenced code fills the content column as a rectangle and preserves each source line; unknown or absent language tags retain the plain code style. `margin_left` and `margin_right` are independently configurable; both default to one space. YAML frontmatter delimited by `---` is shown with full-width rules and preserves one rendered line per source line.
 
 `width: 0` follows the terminal width. Paragraphs are reflowed to that width, and wrapped list continuation lines are indented beneath their bullet. Nested lists retain two spaces of indentation per level. Single newlines are reflowed while blank-line paragraph breaks remain. Inline math spans are kept intact while wrapping paragraphs; inline code spans wrap at their internal spaces, and punctuation at soft line breaks is joined naturally. GitHub-Flavored Markdown tables render with Glamour-style aligned columns, header rules, alignment markers, and wrapping for narrow terminals. Block transitions between paragraphs, lists, blockquotes, and tables receive a blank line.
 Every heading is followed by one empty line. Rendered documents also have
 exactly one blank line at the beginning and end.
 
-Pager mode is always used. The configured external pager defaults to
-`less -R`; set `$PAGER` to override it. There is no separate document TUI.
+Pager mode is always used. The tracked configuration selects md's built-in
+pager with `pager: builtin`; an external pager such as `less -R` is also
+supported, and `$PAGER` overrides the configuration.
 Inline and display math using
 `$...$`, `\(...\)`, `$$...$$`, and `\[...\]` is translated to
 terminal-friendly Unicode, including common fractions, roots, scripts, Greek
 letters, operators, matrices, and cases. Display math is centered as a single
 layout block (preserving script and fraction alignment) and separated from
-surrounding paragraphs by blank lines. Unsupported TeX remains readable
+surrounding paragraphs by blank lines. Display math within a blockquote keeps
+its quote bar on every rendered line. Unsupported TeX remains readable
 as source text.
 
 When given a directory—or no argument from an interactive terminal—`md` opens a
@@ -44,31 +40,29 @@ style: glow-dark
 width: 0
 max_line_length: 100
 render_latex: true
-pager: less -R
+pager: builtin
 ```
 
 Set `render_latex: false` to leave `$...$`, `\(...\)`, `$$...$$`, and
 `\[...\]` math source uncompiled. The default is `true`.
 `max_line_length` limits the Markdown content column and centers it when the
 terminal is wider; it defaults to 100, while `0` follows the available width.
-`pager` selects the external pager command and defaults to `less -R`; `$PAGER`
-overrides it when set.
+`pager: builtin` selects the built-in pager (arrow keys or `j`/`k` to scroll,
+Space/`b` to page, `g`/`G` to jump, `q` to quit, and `e` to edit and reload a
+single file). An external pager command such as `less -R` is also supported;
+`$PAGER` overrides either choice when set.
 
 Add or adjust a style block under `styles:` using the color fields and margin
 fields shown in the tracked example.
 
 ## Build and install on Linux
 
-The source is [`tools/md.rs`](../tools/md.rs). Math is rendered by the
-vendored MIT-licensed Pi TUI renderer in `vendor/pi-tui/latex.js`, accessed
-through one persistent Node bridge process. Node is therefore required for the
-Pi math path; the Rust fallback remains available if the bridge cannot start.
-The viewer itself builds to a native user-local binary. Tagged GitHub releases
-also publish a Linux x86_64 archive containing the binary and Pi math assets.
+The source is [`tools/md.rs`](../tools/md.rs), and Cargo uses [`Cargo.toml`](../Cargo.toml) and [`Cargo.lock`](../Cargo.lock) to build the Syntect highlighter. Math is rendered by the vendored MIT-licensed Pi TUI renderer in `vendor/pi-tui/latex.js`, accessed through one persistent Node bridge process. Node is therefore required for the Pi math path; the Rust fallback is used if the bridge cannot start or stops responding. Tagged GitHub releases publish a Linux x86_64 archive containing the binary and Pi math assets.
 
 ```sh
-mkdir -p ~/.local/bin
-rustc -O -C strip=symbols ~/md/tools/md.rs -o ~/.local/bin/md
+cd ~/md
+cargo build --release
+install -Dm755 target/release/md ~/.local/bin/md
 ```
 
 Deploy the tracked configuration:
@@ -87,8 +81,7 @@ md .
 printf '# Heading\n\nMarkdown from stdin.\n' | md -
 ```
 
-The external pager handles navigation and exit keys. Use `PAGER=cat` for a
-non-interactive smoke test. The command accepts one or more Markdown paths; `-`
+Use `PAGER=cat` for a non-interactive smoke test. The command accepts one or more Markdown paths; `-`
 reads standard input.
 
 ## Removal

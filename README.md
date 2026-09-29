@@ -7,7 +7,7 @@ more control over math rendering.
 
 ## What it does
 
-- Renders headings, paragraphs, emphasis, links, code spans, fenced code, nested lists, blockquotes, rules, tables, and common Markdown structure.
+- Renders headings, paragraphs, emphasis, links, code spans, syntax-highlighted fenced code, nested lists, blockquotes, rules, tables, and common Markdown structure.
 - Reflows soft line breaks within paragraphs while preserving paragraph and
   block boundaries.
 - Wraps long inline code spans at their internal spaces without losing code
@@ -20,8 +20,8 @@ more control over math rendering.
   its internal layout.
 - Provides configurable Glow-inspired light and dark styles, colors, margins,
   terminal width, and optional LaTeX conversion.
-- Uses `less -R` by default as the external pager. Set `$PAGER` to override
-  the configured pager command.
+- Uses the built-in pager in the tracked configuration; set `pager: less -R`
+  or `$PAGER` to select an external pager.
 - Opens directories with an interactive Markdown file picker with paging,
   live file counts, navigation, and editor shortcuts.
 
@@ -51,25 +51,27 @@ style: glow-dark
 width: 0
 max_line_length: 100
 render_latex: true
-pager: less -R
+pager: builtin
 ```
 
 `render_latex: false` leaves supported math delimiters and source unchanged.
 `max_line_length` limits the Markdown content column and centers it when the
 terminal is wider; it defaults to 100, while `0` uses the available width.
-`pager` selects the external pager command and defaults to `less -R`; `$PAGER`
-overrides it when set. Named styles can customize foreground/background colors
+`pager: builtin` selects md's interactive pager; an external command such as
+`less -R` also works. `$PAGER` overrides the configured choice when set. The
+built-in pager supports arrows, `j`/`k`, paging, `g`/`G`, `q`, and `e` to edit
+and reload a single file. Named styles can customize foreground/background colors
 and left/right margins.
 See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 [`docs/md.md`](docs/md.md) for the full configuration and behavior reference.
 
 ## Build and install
 
-The viewer is a small Rust program and can be built without a Cargo project:
+Build and install with Cargo (Rust's package manager); this fetches Syntect and its dependencies on the first build:
 
 ```sh
-mkdir -p ~/.local/bin
-rustc -O -C strip=symbols tools/md.rs -o ~/.local/bin/md
+cargo build --release
+install -Dm755 target/release/md ~/.local/bin/md
 mkdir -p ~/.config
 ln -sfn "$PWD/.config/md.yaml" ~/.config/md.yaml
 ```
@@ -96,8 +98,7 @@ cp -a share/md/. ~/.local/share/md/
 ln -sfn ~/.local/share/md/md.yaml ~/.config/md.yaml
 ```
 
-Release archives include SHA-256 checksums. The binary release is optional;
-building directly from `tools/md.rs` remains supported.
+Release archives include SHA-256 checksums. The binary release is optional; local builds use Cargo and the `Cargo.lock` dependency versions.
 
 ## License and attribution
 

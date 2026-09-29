@@ -49,10 +49,10 @@ impl Theme {
             link_text_fg: 29,
             inline_code_fg: 203,
             inline_code_bg: 254,
-            search_selected_bg: 226,
+            search_selected_bg: 208,
             search_selected_fg: 0,
-            search_other_bg: 0,
-            search_other_fg: 15,
+            search_other_bg: 226,
+            search_other_fg: 0,
             margin_left: 1,
             margin_right: 1,
         }
@@ -69,10 +69,10 @@ impl Theme {
             link_text_fg: 35,
             inline_code_fg: 203,
             inline_code_bg: 236,
-            search_selected_bg: 226,
+            search_selected_bg: 208,
             search_selected_fg: 0,
-            search_other_bg: 0,
-            search_other_fg: 15,
+            search_other_bg: 226,
+            search_other_fg: 0,
             margin_left: 1,
             margin_right: 1,
         }
@@ -1813,6 +1813,14 @@ mod tests {
         let config = parse_config("style: glow-dark\nstyles:\n  glow-dark:\n    search_selected_bg: 201\n    search_selected_fg: 0\n    search_other_bg: 24\n    search_other_fg: 15\n").expect("search colors should parse");
         let (theme, _, _, _, _) = config.theme().expect("theme should resolve");
         assert_eq!((theme.search_selected_bg, theme.search_selected_fg, theme.search_other_bg, theme.search_other_fg), (201, 0, 24, 15));
+    }
+
+    #[test]
+    fn search_defaults_are_black_on_orange_and_black_on_yellow() {
+        for theme in [Theme::glow_light(), Theme::glow_dark()] {
+            assert_eq!((theme.search_selected_fg, theme.search_selected_bg), (0, 208));
+            assert_eq!((theme.search_other_fg, theme.search_other_bg), (0, 226));
+        }
     }
 
     #[test]

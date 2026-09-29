@@ -59,7 +59,7 @@ pager: builtin
 terminal is wider; it defaults to 100, while `0` uses the available width.
 `pager: builtin` selects md's interactive pager; an external command such as
 `less -R` also works. `$PAGER` overrides the configured choice when set. The
-built-in pager supports arrows, `j`/`k`, paging, `g`/`G`, `/` to search visible text, `n`/`N` for the next/previous match, Esc to clear the search highlights, `q` to quit, and `e` to edit and reload a single file. Named styles can customize foreground/background colors and left/right margins. Set `search_selected_fg`/`search_selected_bg` and `search_other_fg`/`search_other_bg` within a style to choose 256-color match colors (black on yellow for the active match, white on black for the others in the tracked styles).
+built-in pager supports arrows, `j`/`k`, paging, `g`/`G`, `/` to search visible text, `n`/`N` for the next/previous match, Esc to clear the search highlights, `q` to quit, and `e` to edit and reload a single file. Named styles can customize foreground/background colors and left/right margins. Set `search_selected_fg`/`search_selected_bg` and `search_other_fg`/`search_other_bg` within a style to choose 256-color match colors (black on orange for the active match, black on yellow for the others in the tracked styles).
 See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 [`docs/md.md`](docs/md.md) for the full configuration and behavior reference.
 

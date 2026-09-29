@@ -23,7 +23,9 @@ styles:
     inline_code_fg: 234
     inline_code_bg: 254
     search_selected_bg: 226 # yellow
+    search_selected_fg: 0 # black
     search_other_bg: 0 # black
+    search_other_fg: 15 # white
     margin_left: 1
     margin_right: 1
   glow-light:
@@ -37,7 +39,9 @@ styles:
     inline_code_fg: 203
     inline_code_bg: 254
     search_selected_bg: 226 # yellow
+    search_selected_fg: 0 # black
     search_other_bg: 0 # black
+    search_other_fg: 15 # white
     margin_left: 1
     margin_right: 1
   glow-dark:
@@ -51,6 +55,8 @@ styles:
     inline_code_fg: 203
     inline_code_bg: 236
     search_selected_bg: 226 # yellow
+    search_selected_fg: 0 # black
     search_other_bg: 0 # black
+    search_other_fg: 15 # white
     margin_left: 1
     margin_right: 1

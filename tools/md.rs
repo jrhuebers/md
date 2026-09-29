@@ -30,7 +30,9 @@ struct Theme {
     inline_code_fg: u8,
     inline_code_bg: u8,
     search_selected_bg: u8,
+    search_selected_fg: u8,
     search_other_bg: u8,
+    search_other_fg: u8,
     margin_left: usize,
     margin_right: usize,
 }
@@ -48,7 +50,9 @@ impl Theme {
             inline_code_fg: 203,
             inline_code_bg: 254,
             search_selected_bg: 226,
+            search_selected_fg: 0,
             search_other_bg: 0,
+            search_other_fg: 15,
             margin_left: 1,
             margin_right: 1,
         }
@@ -66,7 +70,9 @@ impl Theme {
             inline_code_fg: 203,
             inline_code_bg: 236,
             search_selected_bg: 226,
+            search_selected_fg: 0,
             search_other_bg: 0,
+            search_other_fg: 15,
             margin_left: 1,
             margin_right: 1,
         }
@@ -88,7 +94,9 @@ impl Theme {
             "inline_code_fg" => self.inline_code_fg = parsed,
             "inline_code_bg" => self.inline_code_bg = parsed,
             "search_selected_bg" => self.search_selected_bg = parsed,
+            "search_selected_fg" => self.search_selected_fg = parsed,
             "search_other_bg" => self.search_other_bg = parsed,
+            "search_other_fg" => self.search_other_fg = parsed,
             "margin_left" => self.margin_left = parsed as usize,
             "margin_right" => self.margin_right = parsed as usize,
             _ => {}
@@ -176,7 +184,7 @@ fn main() {
         // Do not leave the math helper attached to the terminal while the pager runs.
         math::shutdown();
         let result = if built_in {
-            pager::run(&rendered, editable_path.is_some(), 60, 2, false, pager::SearchColors { selected_bg: theme.search_selected_bg, other_bg: theme.search_other_bg }, |_| rendered.clone())
+            pager::run(&rendered, editable_path.is_some(), 60, 2, false, pager::SearchColors { selected_bg: theme.search_selected_bg, selected_fg: theme.search_selected_fg, other_bg: theme.search_other_bg, other_fg: theme.search_other_fg }, |_| rendered.clone())
             .map(|action| matches!(action, pager::Action::Edit))
         } else {
             page(&rendered, &pager).map(|_| false)
@@ -1802,9 +1810,9 @@ mod tests {
         assert_eq!(config.pager, "more -R");
         let config = parse_config("pager: builtin\n").expect("built-in pager config should parse");
         assert_eq!(config.pager, "builtin");
-        let config = parse_config("style: glow-dark\nstyles:\n  glow-dark:\n    search_selected_bg: 201\n    search_other_bg: 24\n").expect("search colors should parse");
+        let config = parse_config("style: glow-dark\nstyles:\n  glow-dark:\n    search_selected_bg: 201\n    search_selected_fg: 0\n    search_other_bg: 24\n    search_other_fg: 15\n").expect("search colors should parse");
         let (theme, _, _, _, _) = config.theme().expect("theme should resolve");
-        assert_eq!((theme.search_selected_bg, theme.search_other_bg), (201, 24));
+        assert_eq!((theme.search_selected_bg, theme.search_selected_fg, theme.search_other_bg, theme.search_other_fg), (201, 0, 24, 15));
     }
 
     #[test]

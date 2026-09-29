@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Highlight fenced code blocks by language with Syntect, using the active light or dark style.
 - Render display math inside blockquotes while retaining the quote bar and its indentation.
 - Search visible text in the built-in pager with `/`, highlight matches, and move through matching occurrences with `n`/`N`.
-- Configure selected and other search-match backgrounds per theme (`search_selected_bg` and `search_other_bg`).
+- Configure selected and other search-match foregrounds and backgrounds per theme (`search_selected_fg`, `search_selected_bg`, `search_other_fg`, and `search_other_bg`).
 
 ### Changed
 
@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Align stacked fractions correctly after combining accents such as the overbar in `a̅`.
 - Preserve spacing before stacked limit operators (`lim`, `limsup`, etc.) in display math.
 - Ignore invisible word separators in math source so multirow matrices and fractions stay aligned.
+- Let Esc clear an active search and its highlights in the built-in pager.
 
 ## [0.6.43] - 2026-09-27
 

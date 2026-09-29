@@ -26,7 +26,9 @@ pub enum Action {
 #[derive(Clone, Copy)]
 pub struct SearchColors {
     pub selected_bg: u8,
+    pub selected_fg: u8,
     pub other_bg: u8,
+    pub other_fg: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,6 +234,12 @@ where
                         dirty = true;
                     }
                 }
+                Key::Escape if !query.is_empty() => {
+                    query.clear();
+                    matches.clear();
+                    active_match = None;
+                    dirty = true;
+                }
                 Key::Enter | Key::Backspace | Key::Escape | Key::Character(_) => {}
                 Key::Mouse(event) => {
                     let was_dragging = dragging.is_some();
@@ -289,8 +297,9 @@ fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, 
     let mut position = 0;
     let mut index = 0;
     let mut highlighting = false;
+    let mut current_foreground = "\x1b[39m".to_string();
     let mut current_background = "\x1b[49m".to_string();
-    let mut highlight_background = String::new();
+    let mut highlight_colors = String::new();
     while let Some(character) = chars.next() {
         if character == '\x1b' {
             let mut escape = String::from("\x1b");
@@ -298,20 +307,25 @@ fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, 
                 escape.push(control);
                 if control.is_ascii_alphabetic() { break; }
             }
-            update_background(&escape, &mut current_background);
+            update_colors(&escape, &mut current_foreground, &mut current_background);
             result.push_str(&escape);
-            if highlighting { result.push_str(&highlight_background); }
+            if highlighting { result.push_str(&highlight_colors); }
             continue;
         }
         if index < ranges.len() && position == ranges[index].0 {
-            let color = if selected == Some(ranges[index]) { colors.selected_bg } else { colors.other_bg };
-            highlight_background = format!("\x1b[48;5;{color}m");
-            result.push_str(&highlight_background);
+            let (fg, bg) = if selected == Some(ranges[index]) {
+                (colors.selected_fg, colors.selected_bg)
+            } else {
+                (colors.other_fg, colors.other_bg)
+            };
+            highlight_colors = format!("\x1b[38;5;{fg};48;5;{bg}m");
+            result.push_str(&highlight_colors);
             highlighting = true;
         }
         result.push(character);
         position += character.len_utf8();
         if index < ranges.len() && position == ranges[index].1 {
+            result.push_str(&current_foreground);
             result.push_str(&current_background);
             highlighting = false;
             index += 1;
@@ -320,19 +334,29 @@ fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, 
     result
 }
 
-fn update_background(escape: &str, current: &mut String) {
+fn update_colors(escape: &str, foreground: &mut String, background: &mut String) {
     let Some(params) = escape.strip_prefix("\x1b[").and_then(|value| value.strip_suffix('m')) else { return };
     let codes: Vec<_> = params.split(';').map(|code| code.parse::<u16>().unwrap_or(0)).collect();
     let mut index = 0;
     while index < codes.len() {
-        match codes[index] {
-            0 | 49 => *current = "\x1b[49m".to_string(),
-            48 if codes.get(index + 1) == Some(&5) && codes.len() > index + 2 => {
-                *current = format!("\x1b[48;5;{}m", codes[index + 2]);
+        let code = codes[index];
+        match code {
+            0 => {
+                *foreground = "\x1b[39m".to_string();
+                *background = "\x1b[49m".to_string();
+            }
+            39 => *foreground = "\x1b[39m".to_string(),
+            49 => *background = "\x1b[49m".to_string(),
+            30..=37 | 90..=97 => *foreground = format!("\x1b[{code}m"),
+            40..=47 | 100..=107 => *background = format!("\x1b[{code}m"),
+            38 | 48 if codes.get(index + 1) == Some(&5) && codes.len() > index + 2 => {
+                let saved = format!("\x1b[{code};5;{}m", codes[index + 2]);
+                if code == 38 { *foreground = saved } else { *background = saved }
                 index += 2;
             }
-            48 if codes.get(index + 1) == Some(&2) && codes.len() > index + 4 => {
-                *current = format!("\x1b[48;2;{};{};{}m", codes[index + 2], codes[index + 3], codes[index + 4]);
+            38 | 48 if codes.get(index + 1) == Some(&2) && codes.len() > index + 4 => {
+                let saved = format!("\x1b[{code};2;{};{};{}m", codes[index + 2], codes[index + 3], codes[index + 4]);
+                if code == 38 { *foreground = saved } else { *background = saved }
                 index += 4;
             }
             _ => {}
@@ -483,7 +507,7 @@ fn draw(lines: &[String], offset: usize, total: usize, viewport: usize, columns:
             .unwrap_or_else(|| "not found".to_string());
         format!(" md  {percent:>3}%  {}/{}   /{query} ({count})  n/N next/prev  q quit", offset + 1, total)
     } else {
-        format!(" md  {percent:>3}%  {}/{}   ↑/↓ line  PgUp/PgDn/u/d half  Space/b page  g/G top/bottom  / search  {edit_hint}q quit", offset + 1, total)
+        format!(" md  {percent:>3}%  {}/{}  / search  n/N  ↑/↓ scroll  Space/b page  g/G  {edit_hint}q quit", offset + 1, total)
     };
     let status = truncate_plain(&status, columns);
     let status = format!("{status:<columns$}");
@@ -692,13 +716,21 @@ mod tests {
     }
 
     #[test]
-    fn highlights_selected_and_other_matches_without_changing_foreground_or_code_background() {
-        let colors = SearchColors { selected_bg: 226, other_bg: 0 };
+    fn highlights_selected_and_other_matches_and_restores_original_colors() {
+        let colors = SearchColors { selected_bg: 226, selected_fg: 0, other_bg: 0, other_fg: 15 };
         let original = "\x1b[38;5;39;48;5;236mAlpha alpha\x1b[0m";
         let highlighted = highlight_matches(original, "alpha", Some((0, 5)), colors);
         assert_eq!(plain_text(&highlighted), "Alpha alpha");
-        assert!(highlighted.contains("\x1b[48;5;226mAlpha\x1b[48;5;236m"));
-        assert!(highlighted.contains("\x1b[48;5;0malpha\x1b[48;5;236m"));
-        assert!(highlighted.contains("\x1b[38;5;39;48;5;236m"));
+        assert!(highlighted.contains("\x1b[38;5;0;48;5;226mAlpha\x1b[38;5;39m\x1b[48;5;236m"));
+        assert!(highlighted.contains("\x1b[38;5;15;48;5;0malpha\x1b[38;5;39m\x1b[48;5;236m"));
+    }
+
+    #[test]
+    fn reasserts_search_colors_after_embedded_style_changes() {
+        let colors = SearchColors { selected_bg: 201, selected_fg: 16, other_bg: 24, other_fg: 231 };
+        let line = "\x1b[38;5;39mAl\x1b[38;2;4;5;6mpha\x1b[0m";
+        let highlighted = highlight_matches(line, "alpha", Some((0, 5)), colors);
+        assert!(highlighted.contains("\x1b[38;2;4;5;6m\x1b[38;5;16;48;5;201mpha"));
+        assert!(highlighted.contains("pha\x1b[38;2;4;5;6m\x1b[49m"));
     }
 }

@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve spacing before stacked limit operators (`lim`, `limsup`, etc.) in display math.
 - Ignore invisible word separators in math source so multirow matrices and fractions stay aligned.
 - Let Esc clear an active search and its highlights in the built-in pager.
+- Show search matches at normal intensity even inside dimmed blockquotes, then restore the original styling.
 
 ## [0.6.43] - 2026-09-27
 

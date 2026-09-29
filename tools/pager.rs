@@ -289,6 +289,12 @@ fn plain_text(line: &str) -> String {
     result
 }
 
+#[derive(Default)]
+struct Intensity {
+    bold: bool,
+    dim: bool,
+}
+
 fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, colors: SearchColors) -> String {
     let ranges = match_ranges(&plain_text(line), query);
     if ranges.is_empty() { return line.to_string(); }
@@ -299,6 +305,7 @@ fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, 
     let mut highlighting = false;
     let mut current_foreground = "\x1b[39m".to_string();
     let mut current_background = "\x1b[49m".to_string();
+    let mut intensity = Intensity::default();
     let mut highlight_colors = String::new();
     while let Some(character) = chars.next() {
         if character == '\x1b' {
@@ -307,7 +314,7 @@ fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, 
                 escape.push(control);
                 if control.is_ascii_alphabetic() { break; }
             }
-            update_colors(&escape, &mut current_foreground, &mut current_background);
+            update_colors(&escape, &mut current_foreground, &mut current_background, &mut intensity);
             result.push_str(&escape);
             if highlighting { result.push_str(&highlight_colors); }
             continue;
@@ -318,13 +325,16 @@ fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, 
             } else {
                 (colors.other_fg, colors.other_bg)
             };
-            highlight_colors = format!("\x1b[38;5;{fg};48;5;{bg}m");
+            highlight_colors = format!("\x1b[22;38;5;{fg};48;5;{bg}m");
             result.push_str(&highlight_colors);
             highlighting = true;
         }
         result.push(character);
         position += character.len_utf8();
         if index < ranges.len() && position == ranges[index].1 {
+            result.push_str("\x1b[22m");
+            if intensity.bold { result.push_str("\x1b[1m"); }
+            if intensity.dim { result.push_str("\x1b[2m"); }
             result.push_str(&current_foreground);
             result.push_str(&current_background);
             highlighting = false;
@@ -334,7 +344,7 @@ fn highlight_matches(line: &str, query: &str, selected: Option<(usize, usize)>, 
     result
 }
 
-fn update_colors(escape: &str, foreground: &mut String, background: &mut String) {
+fn update_colors(escape: &str, foreground: &mut String, background: &mut String, intensity: &mut Intensity) {
     let Some(params) = escape.strip_prefix("\x1b[").and_then(|value| value.strip_suffix('m')) else { return };
     let codes: Vec<_> = params.split(';').map(|code| code.parse::<u16>().unwrap_or(0)).collect();
     let mut index = 0;
@@ -344,7 +354,12 @@ fn update_colors(escape: &str, foreground: &mut String, background: &mut String)
             0 => {
                 *foreground = "\x1b[39m".to_string();
                 *background = "\x1b[49m".to_string();
+                intensity.bold = false;
+                intensity.dim = false;
             }
+            1 => intensity.bold = true,
+            2 => intensity.dim = true,
+            22 => { intensity.bold = false; intensity.dim = false; }
             39 => *foreground = "\x1b[39m".to_string(),
             49 => *background = "\x1b[49m".to_string(),
             30..=37 | 90..=97 => *foreground = format!("\x1b[{code}m"),
@@ -721,8 +736,17 @@ mod tests {
         let original = "\x1b[38;5;39;48;5;236mAlpha alpha\x1b[0m";
         let highlighted = highlight_matches(original, "alpha", Some((0, 5)), colors);
         assert_eq!(plain_text(&highlighted), "Alpha alpha");
-        assert!(highlighted.contains("\x1b[38;5;0;48;5;226mAlpha\x1b[38;5;39m\x1b[48;5;236m"));
-        assert!(highlighted.contains("\x1b[38;5;15;48;5;0malpha\x1b[38;5;39m\x1b[48;5;236m"));
+        assert!(highlighted.contains("\x1b[22;38;5;0;48;5;226mAlpha\x1b[22m\x1b[38;5;39m\x1b[48;5;236m"));
+        assert!(highlighted.contains("\x1b[22;38;5;15;48;5;0malpha\x1b[22m\x1b[38;5;39m\x1b[48;5;236m"));
+    }
+
+    #[test]
+    fn search_white_is_not_dimmed_by_blockquotes_and_original_intensity_returns() {
+        let colors = SearchColors { selected_bg: 226, selected_fg: 0, other_bg: 0, other_fg: 15 };
+        let line = "\x1b[1;2m│ text text\x1b[0m";
+        let highlighted = highlight_matches(line, "text", Some((9, 13)), colors);
+        assert!(highlighted.contains("\x1b[22;38;5;15;48;5;0mtext\x1b[22m\x1b[1m\x1b[2m"));
+        assert!(highlighted.contains("\x1b[22;38;5;0;48;5;226mtext\x1b[22m\x1b[1m\x1b[2m"));
     }
 
     #[test]
@@ -730,7 +754,7 @@ mod tests {
         let colors = SearchColors { selected_bg: 201, selected_fg: 16, other_bg: 24, other_fg: 231 };
         let line = "\x1b[38;5;39mAl\x1b[38;2;4;5;6mpha\x1b[0m";
         let highlighted = highlight_matches(line, "alpha", Some((0, 5)), colors);
-        assert!(highlighted.contains("\x1b[38;2;4;5;6m\x1b[38;5;16;48;5;201mpha"));
-        assert!(highlighted.contains("pha\x1b[38;2;4;5;6m\x1b[49m"));
+        assert!(highlighted.contains("\x1b[38;2;4;5;6m\x1b[22;38;5;16;48;5;201mpha"));
+        assert!(highlighted.contains("pha\x1b[22m\x1b[38;2;4;5;6m\x1b[49m"));
     }
 }

@@ -9,7 +9,7 @@ more control over math rendering.
 
 - Renders headings, paragraphs, emphasis, links, code spans, syntax-highlighted fenced code, nested lists, blockquotes, rules, tables, and common Markdown structure.
 - Reflows soft line breaks within paragraphs while preserving paragraph and
-  block boundaries.
+  block boundaries; long headings wrap with continuation text aligned past their `#` markers.
 - Wraps long inline code spans at their internal spaces without losing code
   styling.
 - Supports inline and display math with `$...$`, `\(...\)`, `$$...$$`, and

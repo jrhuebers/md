@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search visible text in the built-in pager with `/`, highlight matches, and move through matching occurrences with `n`/`N`.
 - Configure selected and other search-match foregrounds and backgrounds per theme (`search_selected_fg`, `search_selected_bg`, `search_other_fg`, and `search_other_bg`); the tracked styles use black on orange for the selected match and black on yellow for the others.
 - Show a light-grey insertion caret in the built-in pager's `/` search prompt.
+- Wrap long headings, aligning continuation lines beneath the heading text after the displayed `#` markers.
 
 ### Changed
 

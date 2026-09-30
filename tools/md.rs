@@ -532,24 +532,28 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             previous_block = None;
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             ensure_blank_line(&mut output, theme);
-            let mut rendered = if level == 1 {
-                style(theme.h1_fg, Some(theme.h1_bg), true, false, false)
-            } else {
-                style(theme.heading_fg, None, true, false, false)
-            };
-            if level == 1 {
-                rendered.push(' ');
-            } else {
-                // Glow keeps the Markdown heading marker for H2 through H6.
-                rendered.push_str(&"#".repeat(level));
-                rendered.push(' ');
+            // Continuations align under the first heading character, past the displayed marker.
+            let prefix = if level == 1 { " ".to_string() } else { format!("{} ", "#".repeat(level)) };
+            let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
+            let available = content_width.saturating_sub(prefix.len() + usize::from(level == 1)).max(1);
+            for (index, chunk) in wrap_text(heading.trim(), available).iter().enumerate() {
+                let mut rendered = if level == 1 {
+                    style(theme.h1_fg, Some(theme.h1_bg), true, false, false)
+                } else {
+                    style(theme.heading_fg, None, true, false, false)
+                };
+                if index == 0 {
+                    rendered.push_str(&prefix);
+                } else {
+                    rendered.push_str(&" ".repeat(prefix.len()));
+                }
+                rendered.push_str(&render_inline(chunk, if level == 1 { theme.h1_fg } else { theme.heading_fg }, theme));
+                if level == 1 {
+                    rendered.push(' ');
+                }
+                rendered.push_str(RESET);
+                push_line(&mut output, &rendered, theme);
             }
-            rendered.push_str(&render_inline(heading.trim(), if level == 1 { theme.h1_fg } else { theme.heading_fg }, theme));
-            if level == 1 {
-                rendered.push(' ');
-            }
-            rendered.push_str(RESET);
-            push_line(&mut output, &rendered, theme);
             push_line(&mut output, "", theme);
             suppress_blank = true;
             continue;
@@ -1821,6 +1825,35 @@ mod tests {
             assert_eq!((theme.search_selected_fg, theme.search_selected_bg), (0, 208));
             assert_eq!((theme.search_other_fg, theme.search_other_bg), (0, 226));
         }
+    }
+
+    #[test]
+    fn wrapped_headings_align_continuations_after_displayed_markers() {
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        for level in 2..=6 {
+            let source = format!("{} Alpha beta gamma delta", "#".repeat(level));
+            let rendered = render_document(&source, &Theme::glow_light(), 22, 0);
+            let plain = strip.replace_all(&rendered, "");
+            let lines: Vec<_> = plain.lines().collect();
+            let first = lines.iter().position(|line| line.contains("Alpha")).unwrap();
+            let marker = format!("{} ", "#".repeat(level));
+            assert!(lines[first].starts_with(&format!(" {marker}")), "{lines:?}");
+            assert!(lines[first + 1].starts_with(&" ".repeat(1 + marker.len())), "{lines:?}");
+            assert!(lines[first + 1].contains("delta"), "{lines:?}");
+            assert!(lines[first + 2].trim().is_empty(), "{lines:?}");
+            assert!(lines.iter().all(|line| UnicodeWidthStr::width(*line) <= 22), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn wraps_h1_without_displayed_hashes() {
+        let rendered = render_document("# Alpha beta gamma delta", &Theme::glow_light(), 18, 0);
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        let plain = strip.replace_all(&rendered, "");
+        let lines: Vec<_> = plain.lines().collect();
+        assert!(lines.iter().any(|line| line.starts_with("  Alpha beta")));
+        assert!(lines.iter().any(|line| line.starts_with("  gamma delta")));
+        assert!(!plain.contains('#'));
     }
 
     #[test]

@@ -86,7 +86,7 @@ Pi math bridge, its vendored renderer, and an example configuration. To install
 a release manually:
 
 ```sh
-version=0.6.43
+version=0.7.0
 archive="md-v${version}-x86_64-unknown-linux-gnu.tar.gz"
 tar -xzf "$archive"
 cd "md-v${version}-x86_64-unknown-linux-gnu"

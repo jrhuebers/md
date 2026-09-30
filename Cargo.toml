@@ -1,6 +1,6 @@
 [package]
 name = "md"
-version = "0.6.43"
+version = "0.7.0"
 edition = "2021"
 
 [[bin]]

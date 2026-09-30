@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-30
+
 ### Added
 
 - Highlight fenced code blocks by language with Syntect, using the active light or dark style.
@@ -130,7 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spacing between paragraphs, lists, blockquotes, and headings.
 - Punctuation and inline math split across source soft line breaks.
 
-[Unreleased]: https://github.com/jrhuebers/md/compare/v0.6.43...HEAD
+[Unreleased]: https://github.com/jrhuebers/md/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jrhuebers/md/compare/v0.6.43...v0.7.0
 [0.6.43]: https://github.com/jrhuebers/md/compare/v0.6.42...v0.6.43
 [0.6.42]: https://github.com/jrhuebers/md/compare/v0.6.41...v0.6.42
 [0.6.41]: https://github.com/jrhuebers/md/compare/v0.6.40...v0.6.41

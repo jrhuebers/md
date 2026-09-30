@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Write release checksum files using the downloadable archive filename rather than a build-directory path.
+
 ## [0.7.0] - 2026-09-30
 
 ### Added

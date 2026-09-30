@@ -30,7 +30,7 @@ jobs:
           install -m 644 vendor/pi-tui/NOTICE "dist/${target}/share/md/vendor/pi-tui/NOTICE"
           install -m 644 .config/md.yaml "dist/${target}/share/md/md.yaml"
           tar -C dist -czf "dist/${target}.tar.gz" "${target}"
-          sha256sum "dist/${target}.tar.gz" > "dist/${target}.tar.gz.sha256"
+          (cd dist && sha256sum "${target}.tar.gz" > "${target}.tar.gz.sha256")
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

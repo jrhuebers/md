@@ -2,22 +2,12 @@ use regex::{Regex, RegexBuilder};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
-use std::process::Command;
 use std::time::Duration;
 use unicode_width::UnicodeWidthChar;
 
+use super::terminal;
+
 const RESET: &str = "\x1b[0m";
-
-#[repr(C)]
-struct PollFd {
-    fd: i32,
-    events: i16,
-    revents: i16,
-}
-
-unsafe extern "C" {
-    fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
-}
 
 pub enum Action {
     Done,
@@ -77,7 +67,7 @@ struct TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = restore_tty(&self.saved);
+        let _ = terminal::restore_tty(&self.saved);
         if self.mouse_enabled {
             print!("\x1b[?1006l\x1b[?1003l");
         }
@@ -90,9 +80,9 @@ pub fn run<F>(rendered: &str, editable: bool, poll_speed: usize, scroll_step: us
 where
     F: FnMut(usize) -> String,
 {
-    let saved = stty(&["-g"])?;
-    if let Err(error) = stty(&["-icanon", "-echo", "min", "1", "time", "0"]) {
-        let _ = restore_tty(&saved);
+    let saved = terminal::stty(&["-g"])?;
+    if let Err(error) = terminal::stty(&["-icanon", "-echo", "min", "1", "time", "0"]) {
+        let _ = terminal::restore_tty(&saved);
         return Err(error);
     }
     let _guard = TerminalGuard { saved, mouse_enabled };
@@ -132,7 +122,7 @@ where
                 rendered = rerender(content_width);
                 lines = collect_lines(&rendered);
                 matches = search_matches(&lines, search_pattern.as_ref());
-                active_match = None;
+                active_match = active_match.and_then(|index| (!matches.is_empty()).then(|| index.min(matches.len() - 1)));
                 total = lines.len().max(1);
                 let new_max = total.saturating_sub(viewport);
                 offset = if old_max == 0 {
@@ -140,6 +130,9 @@ where
                 } else {
                     old_offset.saturating_mul(new_max) / old_max
                 };
+                if let Some(index) = active_match {
+                    offset = matches[index].row.min(new_max);
+                }
                 dirty = true;
                 clear_screen = true;
             } else if old_rows != rows {
@@ -387,10 +380,10 @@ fn update_colors(escape: &str, foreground: &mut String, background: &mut String,
 }
 
 fn read_key_timeout(stdin: &mut File, timeout: Duration, searching: bool) -> io::Result<Option<Key>> {
-    let mut fd = PollFd { fd: stdin.as_raw_fd(), events: 1, revents: 0 };
+    let mut fd = libc::pollfd { fd: stdin.as_raw_fd(), events: libc::POLLIN, revents: 0 };
     loop {
         let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
-        match unsafe { poll(&mut fd, 1, millis) } {
+        match unsafe { libc::poll(&mut fd, 1, millis) } {
             0 => return Ok(None),
             n if n > 0 => return read_key(stdin, searching),
             _ if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => continue,
@@ -637,9 +630,9 @@ fn read_escape(stdin: &mut File) -> io::Result<Option<Key>> {
 // VMIN=1 keeps other terminal readers from treating a timeout as EOF.
 // Poll only while completing escape sequences so a lone Escape does not block.
 fn read_byte_timeout(stdin: &mut File, byte: &mut [u8; 1]) -> io::Result<bool> {
-    let mut fd = PollFd { fd: stdin.as_raw_fd(), events: 1, revents: 0 };
+    let mut fd = libc::pollfd { fd: stdin.as_raw_fd(), events: libc::POLLIN, revents: 0 };
     loop {
-        match unsafe { poll(&mut fd, 1, 100) } {
+        match unsafe { libc::poll(&mut fd, 1, 100) } {
             0 => return Ok(false),
             n if n > 0 => return Ok(stdin.read(byte)? != 0),
             _ if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => continue,
@@ -649,30 +642,7 @@ fn read_byte_timeout(stdin: &mut File, byte: &mut [u8; 1]) -> io::Result<bool> {
 }
 
 fn terminal_size() -> Option<(usize, usize)> {
-    let output = Command::new("stty").args(["-F", "/dev/tty", "size"]).output().ok()?;
-    let size = String::from_utf8_lossy(&output.stdout);
-    let mut values = size.split_whitespace().map(|value| value.parse().ok());
-    let rows = values.next()??;
-    let columns = values.next()??;
-    (rows > 0 && columns > 0).then_some((rows, columns))
-}
-
-fn stty(arguments: &[&str]) -> io::Result<String> {
-    let output = Command::new("stty").arg("-F").arg("/dev/tty").args(arguments).output()?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(io::Error::new(io::ErrorKind::Other, "unable to configure terminal"))
-    }
-}
-
-fn restore_tty(saved: &str) -> io::Result<()> {
-    let status = Command::new("stty").args(["-F", "/dev/tty", saved]).status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::new(io::ErrorKind::Other, "unable to restore terminal"))
-    }
+    terminal::size().map(|(rows, columns)| (rows as usize, columns as usize))
 }
 
 fn visible_width(text: &str) -> usize {

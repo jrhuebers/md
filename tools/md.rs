@@ -12,10 +12,11 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod math;
 mod pager;
+mod terminal;
 
 // The built-in defaults mirror Glamour's LightStyle and DarkStyle, which Glow uses.
 #[derive(Clone)]
@@ -172,6 +173,7 @@ fn main() {
     };
     let editable_path = if paths.len() == 1 && paths[0] != "-" { Some(Path::new(&paths[0])) } else { None };
     loop {
+        math::resume();
         let input = match read_input(&paths) {
             Ok(input) => input,
             Err(error) => {
@@ -184,7 +186,10 @@ fn main() {
         // Do not leave the math helper attached to the terminal while the pager runs.
         math::shutdown();
         let result = if built_in {
-            pager::run(&rendered, editable_path.is_some(), 60, 2, false, pager::SearchColors { selected_bg: theme.search_selected_bg, selected_fg: theme.search_selected_fg, other_bg: theme.search_other_bg, other_fg: theme.search_other_fg }, |_| rendered.clone())
+            pager::run(&rendered, editable_path.is_some(), 60, 2, false, pager::SearchColors { selected_bg: theme.search_selected_bg, selected_fg: theme.search_selected_fg, other_bg: theme.search_other_bg, other_fg: theme.search_other_fg }, |new_columns| {
+                let new_width = if configured_width == 0 { new_columns } else { configured_width };
+                render_document(&input, &theme, new_width, max_line_length)
+            })
             .map(|action| matches!(action, pager::Action::Edit))
         } else {
             page(&rendered, &pager).map(|_| false)
@@ -442,18 +447,24 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
         if in_code {
             previous_block = None;
             let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
-            let code_width = 2 + visible_width(line);
-            let mut rendered = code_style(theme);
-            rendered.push_str("  ");
-            if let Some(highlighter) = code_highlighter.as_mut() {
-                rendered.push_str(&highlight_code_line(line, highlighter, theme));
-                rendered.push_str(&code_style(theme));
+            let prefix = "  ";
+            let content = if let Some(highlighter) = code_highlighter.as_mut() {
+                highlight_code_line(line, highlighter, theme)
             } else {
-                rendered.push_str(line);
+                line.to_string()
+            };
+            for chunk in wrap_styled_code(&content, content_width.saturating_sub(prefix.len())) {
+                let mut rendered = code_style(theme);
+                rendered.push_str(&prefix[..prefix.len().min(content_width)]);
+                rendered.push_str(&chunk);
+                if code_highlighter.is_some() {
+                    rendered.push_str(&code_style(theme));
+                }
+                let used = prefix.len().min(content_width) + visible_width(&chunk);
+                rendered.push_str(&" ".repeat(content_width.saturating_sub(used)));
+                rendered.push_str(RESET);
+                push_line(&mut output, &rendered, theme);
             }
-            rendered.push_str(&" ".repeat(content_width.saturating_sub(code_width)));
-            rendered.push_str(RESET);
-            push_line(&mut output, &rendered, theme);
             continue;
         }
         if let Some((_, closing, _, quoted)) = math_block.as_ref() {
@@ -880,7 +891,7 @@ fn visible_width(text: &str) -> usize {
                 bytes = &bytes[1..];
             }
         } else if let Some(character) = text[text.len() - bytes.len()..].chars().next() {
-            width += 1;
+            width += UnicodeWidthChar::width(character).unwrap_or(0);
             bytes = &bytes[character.len_utf8()..];
         } else {
             break;
@@ -1214,6 +1225,61 @@ fn make_code_highlighter(language: &str, theme: &Theme) -> Option<HighlightLines
     Some(HighlightLines::new(syntax, syntax_theme))
 }
 
+// Highlight the complete source line first, then wrap its styled terminal cells.
+// Reapply the active SGR style at each continuation without changing Syntect's parse state.
+fn wrap_styled_code(content: &str, width: usize) -> Vec<String> {
+    if width == 0 { return vec![String::new()]; }
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut active_style = String::new();
+    let mut used = 0;
+    let mut chars = content.chars();
+    while let Some(character) = chars.next() {
+        if character == '\x1b' {
+            let mut escape = String::from("\x1b");
+            if let Some(kind) = chars.next() {
+                escape.push(kind);
+                if kind == '[' {
+                    for control in chars.by_ref() {
+                        escape.push(control);
+                        if (0x40..=0x7e).contains(&(control as u32)) { break; }
+                    }
+                }
+            }
+            if escape == RESET || escape == "\x1b[m" { active_style.clear(); }
+            else if escape.ends_with('m') { active_style.push_str(&escape); }
+            current.push_str(&escape);
+            continue;
+        }
+        if character == '\t' {
+            let spaces = 4 - used % 4;
+            for _ in 0..spaces {
+                push_code_character(' ', width, &active_style, &mut current, &mut used, &mut chunks);
+            }
+        } else {
+            push_code_character(character, width, &active_style, &mut current, &mut used, &mut chunks);
+        }
+    }
+    chunks.push(current);
+    chunks
+}
+
+fn push_code_character(character: char, width: usize, active_style: &str, current: &mut String, used: &mut usize, chunks: &mut Vec<String>) {
+    let cell_width = UnicodeWidthChar::width(character).unwrap_or(0);
+    if *used + cell_width > width && *used > 0 {
+        chunks.push(std::mem::take(current));
+        current.push_str(active_style);
+        *used = 0;
+    }
+    if cell_width > width {
+        current.push('…');
+        *used += 1;
+    } else {
+        current.push(character);
+        *used += cell_width;
+    }
+}
+
 fn highlight_code_line(line: &str, highlighter: &mut HighlightLines<'static>, theme: &Theme) -> String {
     let input = format!("{line}\n");
     let Some(input_line) = LinesWithEndings::from(&input).next() else {
@@ -1418,10 +1484,11 @@ fn select_paths(directory: &Path) -> io::Result<Option<Vec<String>>> {
     });
 
     let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
-    let saved = stty(&["-g"])?;
-    stty(&["-icanon", "-echo", "min", "0", "time", "0"])?;
-    let action = picker_loop(&mut tty, receiver)?;
-    let _ = restore_tty(&saved);
+    let saved = terminal::stty(&["-g"])?;
+    terminal::stty(&["-icanon", "-echo", "min", "0", "time", "0"])?;
+    let action = picker_loop(&mut tty, receiver);
+    terminal::restore_tty(&saved)?;
+    let action = action?;
     print!("\x1b[2J\x1b[H");
     io::stdout().flush()?;
 
@@ -1692,35 +1759,12 @@ fn draw_picker(files: &[PathBuf], selected: usize, scanning: bool) -> io::Result
 }
 
 fn terminal_columns() -> Option<u16> {
-    if let Ok(columns) = env::var("COLUMNS") {
-        if let Ok(columns) = columns.parse() {
-            return Some(columns);
-        }
-    }
-    let output = Command::new("stty").args(["-F", "/dev/tty", "size"]).output().ok()?;
-    String::from_utf8_lossy(&output.stdout).split_whitespace().nth(1)?.parse().ok()
+    terminal::size().map(|(_, columns)| columns)
+        .or_else(|| env::var("COLUMNS").ok()?.parse().ok())
 }
 
 fn terminal_rows() -> Option<u16> {
-    let output = Command::new("stty").args(["-F", "/dev/tty", "size"]).output().ok()?;
-    String::from_utf8_lossy(&output.stdout).split_whitespace().next()?.parse().ok()
-}
-
-fn stty(arguments: &[&str]) -> io::Result<String> {
-    let output = Command::new("stty").arg("-F").arg("/dev/tty").args(arguments).output()?;
-    if !output.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "unable to configure terminal"));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn restore_tty(saved: &str) -> io::Result<()> {
-    let output = Command::new("stty").args(["-F", "/dev/tty", saved]).output()?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::new(io::ErrorKind::Other, "unable to restore terminal"))
-    }
+    terminal::size().map(|(rows, _)| rows)
 }
 
 fn run_editor(path: &Path) -> io::Result<()> {
@@ -1876,6 +1920,28 @@ mod tests {
         let styled_code = format!("{}  first{}{}", code_style(&theme), " ".repeat(71), RESET);
         assert!(rendered.contains(&styled_code));
         assert!(rendered.contains(&format!("{}  second{}{}", code_style(&theme), " ".repeat(70), RESET)));
+    }
+
+    #[test]
+    fn wraps_long_fenced_code_lines_inside_the_content_column() {
+        let source = "```text\n   opencli-chatgpt-automation/\n   ├── docs/OPENCLI-INSTALL.md     # install OpenCLI + Browser Bridge extension with a longer description\n   └── docs/PI-SKILL.md            # how the skill deploys into the pi agent\n```";
+        let rendered = render_document(source, &Theme::glow_light(), 60, 0);
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        let plain = strip.replace_all(&rendered, "");
+        let lines: Vec<_> = plain.lines().collect();
+        assert!(lines.iter().all(|line| UnicodeWidthStr::width(*line) <= 60), "{plain}");
+        assert!(lines.iter().any(|line| line.contains("OPENCLI-INSTALL.md")));
+        assert!(lines.iter().any(|line| line.contains("Bridge extension")), "{plain}");
+        assert!(lines.len() > 6, "expected a continuation for long source lines: {plain}");
+    }
+
+    #[test]
+    fn syntax_highlighting_survives_code_line_wrapping() {
+        let rendered = render_document("```bash\necho 'long syntax highlighted content that should wrap across several lines without losing colors'\n```", &Theme::glow_dark(), 38, 0);
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        let plain = strip.replace_all(&rendered, "");
+        assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= 38), "{plain:?}");
+        assert!(rendered.matches("\x1b[38;2;").count() >= 2, "highlighting should continue after wrapping");
     }
 
     #[test]

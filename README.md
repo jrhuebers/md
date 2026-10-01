@@ -7,7 +7,7 @@ more control over math rendering.
 
 ## What it does
 
-- Renders headings, paragraphs, emphasis, links, code spans, syntax-highlighted fenced code, nested lists, blockquotes, rules, tables, and common Markdown structure.
+- Renders headings, paragraphs, emphasis, links, code spans, syntax-highlighted fenced code, nested lists, blockquotes, rules, tables, and common Markdown structure. Long fenced-code lines wrap within the content column.
 - Reflows soft line breaks within paragraphs while preserving paragraph and
   block boundaries; long headings wrap with continuation text aligned past their `#` markers.
 - Wraps long inline code spans at their internal spaces without losing code
@@ -19,7 +19,7 @@ more control over math rendering.
 - Keeps inline math on one line; centers multiline display math and preserves
   its internal layout.
 - Provides configurable Glow-inspired light and dark styles, colors, margins,
-  terminal width, and optional LaTeX conversion.
+  terminal width, and optional LaTeX conversion. The built-in pager reflows on terminal resize when `width: 0`.
 - Uses the built-in pager in the tracked configuration; set `pager: less -R`
   or `$PAGER` to select an external pager.
 - Opens directories with an interactive Markdown file picker with paging,
@@ -68,8 +68,9 @@ See [`.config/md.yaml`](.config/md.yaml) for the complete example and
 Build and install with Cargo (Rust's package manager); this fetches Syntect and its dependencies on the first build:
 
 ```sh
-cargo build --release
-install -Dm755 target/release/md ~/.local/bin/md
+cargo build --release --locked
+mkdir -p ~/.local/bin
+install -m 755 target/release/md ~/.local/bin/md
 mkdir -p ~/.config
 ln -sfn "$PWD/.config/md.yaml" ~/.config/md.yaml
 ```
@@ -81,18 +82,27 @@ math renderer. The standalone build and installation details are in
 
 ## Binary releases
 
-Tagged releases publish a Linux x86_64 tarball containing the `md` binary, the
-Pi math bridge, its vendored renderer, and an example configuration. To install
-a release manually:
+Tagged releases provide Linux x86_64/ARM64 and macOS Intel/Apple Silicon archives, each containing the binary, Pi math bridge, vendored renderer, and example configuration. Choose the archive for your machine:
+
+| System | Archive suffix |
+| --- | --- |
+| Linux x86_64 | `x86_64-unknown-linux-gnu` |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` |
+| macOS Intel | `x86_64-apple-darwin` |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+
+For example, to install a downloaded archive (replace `TARGET` with the appropriate suffix):
 
 ```sh
-version=0.7.0
-archive="md-v${version}-x86_64-unknown-linux-gnu.tar.gz"
+version=0.8.0
+TARGET=x86_64-unknown-linux-gnu
+archive="md-v${version}-${TARGET}.tar.gz"
+sha256sum -c "${archive}.sha256" # on macOS: shasum -a 256 -c "${archive}.sha256"
 tar -xzf "$archive"
-cd "md-v${version}-x86_64-unknown-linux-gnu"
-install -Dm755 bin/md ~/.local/bin/md
-mkdir -p ~/.local/share/md ~/.config
-cp -a share/md/. ~/.local/share/md/
+cd "md-v${version}-${TARGET}"
+mkdir -p ~/.local/bin ~/.local/share/md ~/.config
+install -m 755 bin/md ~/.local/bin/md
+cp -R share/md/. ~/.local/share/md/
 ln -sfn ~/.local/share/md/md.yaml ~/.config/md.yaml
 ```
 

@@ -3,9 +3,9 @@
 `md` is a small compiled Markdown viewer for terminal use. It renders Markdown and sends it to a pager; fenced code blocks are highlighted with Syntect, without a Glow runtime dependency.
 
 The configuration is `~/.config/md.yaml`, normally a symlink to the tracked
-`.config/md.yaml`. It contains named style blocks and a root-level `style` selection. The included `md-light`, `glow-light`, and `glow-dark` styles use Glow/Glamour colors; inline code and fenced code share a background, while recognized fenced languages receive Syntect foreground colors and font styles. Fenced code fills the content column as a rectangle and preserves each source line; unknown or absent language tags retain the plain code style. `margin_left` and `margin_right` are independently configurable; both default to one space. YAML frontmatter delimited by `---` is shown with full-width rules and preserves one rendered line per source line.
+`.config/md.yaml`. It contains named style blocks and a root-level `style` selection. The included `md-light`, `glow-light`, and `glow-dark` styles use Glow/Glamour colors; inline code and fenced code share a background, while recognized fenced languages receive Syntect foreground colors and font styles. Fenced code fills the content column as a rectangle; long source lines wrap within it without changing the source, while unknown or absent language tags retain the plain code style. `margin_left` and `margin_right` are independently configurable; both default to one space. YAML frontmatter delimited by `---` is shown with full-width rules and preserves one rendered line per source line.
 
-`width: 0` follows the terminal width. Paragraphs are reflowed to that width, and wrapped list continuation lines are indented beneath their bullet. Nested lists retain two spaces of indentation per level. Single newlines are reflowed while blank-line paragraph breaks remain. Inline math spans are kept intact while wrapping paragraphs; inline code spans wrap at their internal spaces, and punctuation at soft line breaks is joined naturally. GitHub-Flavored Markdown tables render with Glamour-style aligned columns, header rules, alignment markers, and wrapping for narrow terminals. Block transitions between paragraphs, lists, blockquotes, and tables receive a blank line.
+`width: 0` follows the terminal width, including live reflow when resizing the built-in pager. Paragraphs are reflowed to that width, and wrapped list continuation lines are indented beneath their bullet. Nested lists retain two spaces of indentation per level. Single newlines are reflowed while blank-line paragraph breaks remain. Inline math spans are kept intact while wrapping paragraphs; inline code spans wrap at their internal spaces, and punctuation at soft line breaks is joined naturally. GitHub-Flavored Markdown tables render with Glamour-style aligned columns, header rules, alignment markers, and wrapping for narrow terminals. Block transitions between paragraphs, lists, blockquotes, and tables receive a blank line.
 Long headings wrap to the content width, with continuation lines aligned after their displayed `#` markers. Every heading is followed by one empty line. Rendered documents also have
 exactly one blank line at the beginning and end.
 
@@ -54,14 +54,15 @@ Space/`b` to page, `g`/`G` to jump, `/` to search (Enter to confirm, Esc to canc
 Add or adjust a style block under `styles:` using the color fields and margin
 fields shown in the tracked example.
 
-## Build and install on Linux
+## Build and install on Linux or macOS
 
-The source is [`tools/md.rs`](../tools/md.rs), and Cargo uses [`Cargo.toml`](../Cargo.toml) and [`Cargo.lock`](../Cargo.lock) to build the Syntect highlighter. Math is rendered by the vendored MIT-licensed Pi TUI renderer in `vendor/pi-tui/latex.js`, accessed through one persistent Node bridge process. Node is therefore required for the Pi math path; the Rust fallback is used if the bridge cannot start or stops responding. Tagged GitHub releases publish a Linux x86_64 archive containing the binary and Pi math assets.
+The source is [`tools/md.rs`](../tools/md.rs), and Cargo uses [`Cargo.toml`](../Cargo.toml) and [`Cargo.lock`](../Cargo.lock) to build the Syntect highlighter. Math is rendered by the vendored MIT-licensed Pi TUI renderer in `vendor/pi-tui/latex.js`, accessed through one persistent Node bridge process. Node is therefore required for the Pi math path; the Rust fallback is used if the bridge cannot start or stops responding. Tagged GitHub releases publish Linux x86_64/ARM64 and macOS Intel/Apple Silicon archives containing the binary and Pi math assets.
 
 ```sh
 cd ~/md
-cargo build --release
-install -Dm755 target/release/md ~/.local/bin/md
+cargo build --release --locked
+mkdir -p ~/.local/bin
+install -m 755 target/release/md ~/.local/bin/md
 ```
 
 Deploy the tracked configuration:

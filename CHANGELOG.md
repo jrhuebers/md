@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Publish native Linux ARM64 and macOS Intel/Apple Silicon binaries alongside Linux x86_64.
+
+### Changed
+
+- Reflow Markdown in the built-in pager when the terminal width changes, reusing cached LaTeX output without starting a helper inside the pager.
+- Wrap long fenced-code lines within the styled content column, preserving syntax highlighting on continuations.
+
 ### Fixed
 
 - Write release checksum files using the downloadable archive filename rather than a build-directory path.
+- Use portable terminal operations on Linux and macOS and restore picker terminal settings on error.
 
 ## [0.7.0] - 2026-09-30
 

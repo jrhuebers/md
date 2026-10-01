@@ -1,6 +1,7 @@
 //! Pi's MIT-licensed terminal LaTeX renderer is used through a persistent
 //! Node bridge. The Rust fallback keeps md usable when Node is unavailable.
 
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
@@ -16,6 +17,8 @@ struct PiBridge {
 }
 
 static PI_BRIDGE: OnceLock<Mutex<Option<PiBridge>>> = OnceLock::new();
+static RENDER_CACHE: OnceLock<Mutex<HashMap<(bool, String), Option<String>>>> = OnceLock::new();
+static BRIDGE_ALLOWED: AtomicBool = AtomicBool::new(true);
 static RENDER_LATEX: AtomicBool = AtomicBool::new(true);
 static RESTART_AFTER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 const BRIDGE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -30,7 +33,12 @@ pub fn enabled() -> bool {
     RENDER_LATEX.load(Ordering::Relaxed)
 }
 
+pub fn resume() {
+    BRIDGE_ALLOWED.store(true, Ordering::Relaxed);
+}
+
 pub fn shutdown() {
+    BRIDGE_ALLOWED.store(false, Ordering::Relaxed);
     if let Some(state) = PI_BRIDGE.get() {
         if let Ok(mut bridge) = state.lock() {
             stop_bridge(&mut bridge);
@@ -57,6 +65,22 @@ pub fn render_display(source: &str) -> Vec<String> {
 }
 
 fn pi_render(source: &str, display: bool) -> Option<String> {
+    let cache = RENDER_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (display, source.to_string());
+    if let Some(cached) = cache.lock().ok()?.get(&key).cloned() {
+        return cached;
+    }
+    // Resizing reflows the document from cached math, without starting a Node
+    // child while Yazi has handed the terminal over to the built-in pager.
+    if !BRIDGE_ALLOWED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let rendered = pi_render_uncached(source, display);
+    cache.lock().ok()?.insert(key, rendered.clone());
+    rendered
+}
+
+fn pi_render_uncached(source: &str, display: bool) -> Option<String> {
     let bridge = PI_BRIDGE.get_or_init(|| Mutex::new(start_bridge()));
     let mut state = bridge.lock().ok()?;
     if RESTART_AFTER_SHUTDOWN.swap(false, Ordering::Relaxed) && state.is_none() {

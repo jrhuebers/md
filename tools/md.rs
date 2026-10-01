@@ -979,7 +979,7 @@ fn ensure_blank_line(output: &mut String, theme: &Theme) {
 struct WrapToken {
     text: String,
     width: usize,
-    code: bool,
+    code: usize,
     glued: bool,
 }
 
@@ -987,32 +987,32 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut current_width = 0;
-    let mut code_open = false;
+    let mut code_open = 0;
     for token in paragraph_tokens(text) {
         let separator_width = usize::from(!current.is_empty() && !token.glued);
         if !current.is_empty() && current_width + separator_width + token.width > width {
-            if code_open {
-                current.push('`');
-                code_open = false;
+            if code_open > 0 {
+                current.push_str(&"`".repeat(code_open));
+                code_open = 0;
             }
             lines.push(std::mem::take(&mut current));
             current_width = 0;
         }
-        if token.code {
+        if token.code > 0 {
             if !current.is_empty() && !token.glued {
                 current.push(' ');
                 current_width += 1;
             }
-            if !code_open {
-                current.push('`');
-                code_open = true;
+            if code_open == 0 {
+                current.push_str(&"`".repeat(token.code));
+                code_open = token.code;
             }
             current.push_str(&token.text);
             current_width += token.width;
         } else {
-            if code_open {
-                current.push('`');
-                code_open = false;
+            if code_open > 0 {
+                current.push_str(&"`".repeat(code_open));
+                code_open = 0;
             }
             if !current.is_empty() && !token.glued {
                 current.push(' ');
@@ -1022,8 +1022,8 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
             current_width += token.width;
         }
     }
-    if code_open {
-        current.push('`');
+    if code_open > 0 {
+        current.push_str(&"`".repeat(code_open));
     }
     if !current.is_empty() || lines.is_empty() {
         lines.push(current);
@@ -1050,49 +1050,45 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
                 position += 2 + end + 2;
                 consume_punctuation(text, &mut position);
                 let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: word.chars().count().saturating_sub(4), code: false, glued });
+                tokens.push(WrapToken { text: word.to_string(), width: word.chars().count().saturating_sub(4), code: 0, glued });
                 continue;
             }
         }
-        if text[position..].starts_with('`') {
-            if let Some(end) = text[position + 1..].find('`') {
-                let end = position + 1 + end;
-                let content = &text[position + 1..end];
-                let mut parts = content.split_whitespace().peekable();
-                if parts.peek().is_none() {
-                    tokens.push(WrapToken { text: String::new(), width: 0, code: true, glued });
-                } else {
-                    let mut first = true;
-                    for part in parts {
-                        tokens.push(WrapToken {
-                            text: part.to_string(),
-                            width: part.chars().count(),
-                            code: true,
-                            glued: if first { glued } else { false },
-                        });
-                        first = false;
-                    }
-                }
-                position = end + 1;
-                let punctuation_start = position;
-                consume_punctuation(text, &mut position);
-                if position > punctuation_start {
+        if let Some((content, end, marker_len)) = code_span_at(text, position) {
+            let mut parts = content.split_whitespace().peekable();
+            if parts.peek().is_none() {
+                tokens.push(WrapToken { text: String::new(), width: 0, code: marker_len, glued });
+            } else {
+                let mut first = true;
+                for part in parts {
                     tokens.push(WrapToken {
-                        text: text[punctuation_start..position].to_string(),
-                        width: position - punctuation_start,
-                        code: false,
-                        glued: true,
+                        text: part.to_string(),
+                        width: part.chars().count(),
+                        code: marker_len,
+                        glued: if first { glued } else { false },
                     });
+                    first = false;
                 }
-                continue;
             }
+            position = end;
+            let punctuation_start = position;
+            consume_punctuation(text, &mut position);
+            if position > punctuation_start {
+                tokens.push(WrapToken {
+                    text: text[punctuation_start..position].to_string(),
+                    width: position - punctuation_start,
+                    code: 0,
+                    glued: true,
+                });
+            }
+            continue;
         }
         if text[position..].starts_with("$$") {
             if let Some(end) = text[position + 2..].find("$$") {
                 position += 2 + end + 2;
                 consume_punctuation(text, &mut position);
                 let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
                 continue;
             }
         } else if text[position..].starts_with('$') {
@@ -1100,7 +1096,7 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
                 position = end + 1;
                 consume_punctuation(text, &mut position);
                 let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
                 continue;
             }
         } else if text[position..].starts_with("\\(") {
@@ -1108,7 +1104,7 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
                 position += 2 + end + 2;
                 consume_punctuation(text, &mut position);
                 let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
                 continue;
             }
         } else if text[position..].starts_with("\\[") {
@@ -1116,7 +1112,7 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
                 position += 2 + end + 2;
                 consume_punctuation(text, &mut position);
                 let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: false, glued });
+                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
                 continue;
             }
         }
@@ -1129,7 +1125,7 @@ fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
             position += 1;
         }
         let word = &text[start..position];
-        tokens.push(WrapToken { text: word.to_string(), width: word.chars().count(), code: false, glued });
+        tokens.push(WrapToken { text: word.to_string(), width: word.chars().count(), code: 0, glued });
     }
     tokens
 }
@@ -1203,7 +1199,30 @@ fn restore(foreground: u8) -> String {
 }
 
 fn is_fence(line: &str) -> bool {
-    line.starts_with("```") || line.starts_with("~~~")
+    // A backtick fence cannot contain backticks in its info string.
+    // In particular, ```command``` is an inline code span, not a fence.
+    if let Some(info) = line.strip_prefix("```") {
+        !info.contains('`')
+    } else {
+        line.starts_with("~~~")
+    }
+}
+
+// Locate a code span closed by an exact matching run of backticks.
+fn code_span_at(input: &str, start: usize) -> Option<(&str, usize, usize)> {
+    let rest = input.get(start..)?;
+    let run = rest.bytes().take_while(|byte| *byte == b'`').count();
+    if run == 0 { return None; }
+    let mut offset = start + run;
+    while offset < input.len() {
+        let next = input[offset..].find('`')? + offset;
+        let length = input[next..].bytes().take_while(|byte| *byte == b'`').count();
+        if length == run {
+            return Some((&input[start + run..next], next + run, run));
+        }
+        offset = next + length;
+    }
+    None
 }
 
 fn code_style(theme: &Theme) -> String {
@@ -1417,14 +1436,12 @@ fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold
             }
             continue;
         }
-        if rest.starts_with('`') {
-            if let Some(end) = input[index + 1..].find('`') {
-                output.push_str(&code_style(theme));
-                output.push_str(&input[index + 1..index + 1 + end]);
-                output.push_str(&restore_inline(base_foreground, bold_active));
-                index += end + 2;
-                continue;
-            }
+        if let Some((content, end, _)) = code_span_at(input, index) {
+            output.push_str(&code_style(theme));
+            output.push_str(content);
+            output.push_str(&restore_inline(base_foreground, bold_active));
+            index = end;
+            continue;
         }
         if rest.starts_with('[') {
             if let Some(close) = input[index + 1..].find("](") {
@@ -1911,6 +1928,20 @@ mod tests {
             let rendered = render_inline(&chunk, 234, &Theme::glow_light());
             assert!(!rendered.contains('`'), "visible backtick: {}", chunk);
         }
+    }
+
+    #[test]
+    fn renders_triple_backtick_inline_commands_without_starting_a_fence() {
+        let source = "## Usage:\nRun:\n\n```python echo_benchmark_example.py --help```\n\n- ```python echo_benchmark_example.py --task sssp```\n- ```python echo_benchmark_example.py --task diam --epochs 20```";
+        let rendered = render_document(source, &Theme::glow_light(), 50, 0);
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        let plain = strip.replace_all(&rendered, "");
+        assert!(!plain.contains('`'), "{plain}");
+        assert!(plain.contains("--help"), "{plain}");
+        assert!(plain.contains("• python echo_benchmark_example.py"), "{plain}");
+        assert!(plain.contains("diam"), "{plain}");
+        assert!(plain.contains("20"), "{plain}");
+        assert!(rendered.contains(&code_style(&Theme::glow_light())));
     }
 
     #[test]

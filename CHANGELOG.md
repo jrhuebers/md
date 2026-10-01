@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Render triple-backtick inline code spans without mistaking them for fenced code blocks.
+
 ## [0.8.0] - 2026-10-01
 
 ### Added

@@ -4,6 +4,12 @@
 configuration, and documentation in this repository rather than in the
 personal dotfiles repository.
 
+## Repository workflow
+
+Before making changes in this repository, pull the latest changes from the remote
+branch (`git pull --ff-only`). After committing intended changes, push the commit
+to the remote branch. Do not leave committed work only in the local repository.
+
 ## Build and install
 
 Build and install the native binary with Cargo:

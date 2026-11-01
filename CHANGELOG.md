@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Render triple-backtick inline code spans without mistaking them for fenced code blocks.
+- Wrap formatted headings and long unbroken title words using terminal-cell widths, preserving inline styles, heading backgrounds, and continuation alignment.
 
 ## [0.8.0] - 2026-10-01
 

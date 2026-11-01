@@ -547,19 +547,28 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             let prefix = if level == 1 { " ".to_string() } else { format!("{} ", "#".repeat(level)) };
             let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
             let available = content_width.saturating_sub(prefix.len() + usize::from(level == 1)).max(1);
-            for (index, chunk) in wrap_text(heading.trim(), available).iter().enumerate() {
-                let mut rendered = if level == 1 {
-                    style(theme.h1_fg, Some(theme.h1_bg), true, false, false)
-                } else {
-                    style(theme.heading_fg, None, true, false, false)
-                };
+            // Measure the rendered text, not Markdown delimiters. This lets bold,
+            // italic, code, and link text wrap without breaking their syntax.
+            let foreground = if level == 1 { theme.h1_fg } else { theme.heading_fg };
+            let heading_style = style(foreground, (level == 1).then_some(theme.h1_bg), true, false, false);
+            // Inline spans reset their styling when they end. Restore the heading's
+            // bold/background context too, and include it in continuation replay.
+            let inline = render_inline(heading.trim(), foreground, theme)
+                .replace(RESET, &format!("{RESET}{heading_style}"));
+            let content = format!("{heading_style}{inline}");
+            for (index, chunk) in wrap_styled_heading(&content, available).iter().enumerate() {
+                let mut rendered = heading_style.clone();
                 if index == 0 {
                     rendered.push_str(&prefix);
                 } else {
                     rendered.push_str(&" ".repeat(prefix.len()));
                 }
-                rendered.push_str(&render_inline(chunk, if level == 1 { theme.h1_fg } else { theme.heading_fg }, theme));
+                rendered.push_str(chunk);
                 if level == 1 {
+                    // Artificial breaks can end inside code or links; the padding
+                    // belongs to the heading, not the active inline span.
+                    rendered.push_str(RESET);
+                    rendered.push_str(&heading_style);
                     rendered.push(' ');
                 }
                 rendered.push_str(RESET);
@@ -1244,6 +1253,43 @@ fn make_code_highlighter(language: &str, theme: &Theme) -> Option<HighlightLines
     Some(HighlightLines::new(syntax, syntax_theme))
 }
 
+// Prefer word boundaries for headings, then hard-wrap oversized words using the
+// same terminal-cell-aware, style-preserving wrapper as fenced code.
+fn wrap_styled_heading(content: &str, width: usize) -> Vec<String> {
+    let mut words = String::new();
+    let mut used = 0;
+    let mut has_word = false;
+    for word in content.split_ascii_whitespace() {
+        let word_width = visible_width(word);
+        // Closing/reset sequences after trailing styled whitespace are not words.
+        // Do not confuse actual zero-width text (e.g. combining marks) with SGR.
+        let mut text = word;
+        while let Some(rest) = text.strip_prefix("\x1b[") {
+            let Some(end) = rest.find('m') else { break };
+            text = &rest[end + 1..];
+        }
+        if text.is_empty() {
+            words.push_str(word);
+            continue;
+        }
+        if has_word && used + 1 + word_width > width {
+            words.push('\n');
+            used = 0;
+        } else if has_word {
+            words.push(' ');
+            used += 1;
+        }
+        words.push_str(word);
+        has_word = true;
+        used += word_width;
+        if word_width > width {
+            // A short word can still fit on the final hard-wrapped fragment.
+            used = wrap_styled_code(word, width).last().map_or(0, |line| visible_width(line));
+        }
+    }
+    wrap_styled_code(&words, width)
+}
+
 // Highlight the complete source line first, then wrap its styled terminal cells.
 // Reapply the active SGR style at each continuation without changing Syntect's parse state.
 fn wrap_styled_code(content: &str, width: usize) -> Vec<String> {
@@ -1270,7 +1316,11 @@ fn wrap_styled_code(content: &str, width: usize) -> Vec<String> {
             current.push_str(&escape);
             continue;
         }
-        if character == '\t' {
+        if character == '\n' {
+            chunks.push(std::mem::take(&mut current));
+            current.push_str(&active_style);
+            used = 0;
+        } else if character == '\t' {
             let spaces = 4 - used % 4;
             for _ in 0..spaces {
                 push_code_character(' ', width, &active_style, &mut current, &mut used, &mut chunks);
@@ -1915,6 +1965,116 @@ mod tests {
         assert!(lines.iter().any(|line| line.starts_with("  Alpha beta")));
         assert!(lines.iter().any(|line| line.starts_with("  gamma delta")));
         assert!(!plain.contains('#'));
+    }
+
+    #[test]
+    fn wraps_formatted_headings_by_their_rendered_width() {
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        for level in 1..=6 {
+            for title in [
+                "**A long bold title with several words**",
+                "__A long bold title with several words__",
+                "*A long italic title with several words*",
+                "**Bold title with `inline code` and more words**",
+                "[A linked title](https://example.com/a/very/long/path)",
+            ] {
+                let source = format!("{} {title}", "#".repeat(level));
+                let rendered = render_document(&source, &Theme::glow_light(), 24, 0);
+                let plain = strip.replace_all(&rendered, "");
+                let lines: Vec<_> = plain.lines().filter(|line| !line.trim().is_empty()).collect();
+                assert!(lines.len() > 1, "{source}: {plain}");
+                assert!(lines.iter().all(|line| UnicodeWidthStr::width(*line) <= 24), "{source}: {plain}");
+                assert!(!plain.contains('*') && !plain.contains('`') && !plain.contains("__"), "{plain}");
+                let prefix = if level == 1 { 2 } else { level + 2 };
+                assert!(lines.iter().skip(1).all(|line| line.starts_with(&" ".repeat(prefix))), "{plain}");
+            }
+        }
+    }
+
+    #[test]
+    fn wraps_oversized_and_wide_heading_words_without_losing_text() {
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        for level in 1..=6 {
+            for title in [
+                "ThisIsOneVeryLongUnbrokenTitleThatExceedsTheAvailableWidth",
+                "漢字漢字漢字漢字漢字漢字漢字漢字 漢字漢字漢字漢字漢字漢字漢字漢字",
+                "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+                "e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}",
+            ] {
+                let source = format!("{} **{title}**", "#".repeat(level));
+                let rendered = render_document(&source, &Theme::glow_light(), 18, 0);
+                let plain = strip.replace_all(&rendered, "");
+                assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= 18), "{source}: {plain}");
+                let actual: String = plain.chars().filter(|c| !c.is_whitespace() && *c != '#').collect();
+                let expected: String = title.chars().filter(|c| !c.is_whitespace()).collect();
+                assert_eq!(actual, expected, "{source}: {plain}");
+                assert!(plain.lines().all(|line| !line.trim_start().starts_with('\u{301}')), "{plain}");
+            }
+        }
+    }
+
+    #[test]
+    fn heading_word_wrap_uses_remaining_space_and_ignores_style_only_words() {
+        assert_eq!(wrap_styled_heading("abcdefghijklmn end", 10), vec!["abcdefghij", "klmn end"]);
+        let theme = Theme::glow_light();
+        let styled = render_inline("**Alpha beta **", theme.heading_fg, &theme);
+        let chunks = wrap_styled_heading(&styled, 10);
+        assert_eq!(chunks.len(), 1, "{chunks:?}");
+        assert_eq!(visible_width(&chunks[0]), 10);
+    }
+
+    #[test]
+    fn heading_wrap_preserves_zero_width_text_and_nonbreaking_spaces() {
+        assert_eq!(wrap_styled_heading("a \u{301} b", 20), vec!["a \u{301} b"]);
+        assert_eq!(wrap_styled_heading("\u{301} b", 20), vec!["\u{301} b"]);
+        assert_eq!(wrap_styled_heading("A\u{a0}B C", 4), vec!["A\u{a0}B", "C"]);
+    }
+
+    #[test]
+    fn h1_padding_uses_heading_style_when_a_span_continues() {
+        let theme = Theme::glow_light();
+        let heading_style = style(theme.h1_fg, Some(theme.h1_bg), true, false, false);
+        for title in ["`Alpha beta gamma delta`", "[Alpha beta gamma](https://example.com)", "*Alpha beta gamma delta*"] {
+            let rendered = render_document(&format!("# {title}"), &theme, 18, 0);
+            let lines: Vec<_> = rendered.lines().filter(|line| visible_width(line) > 2).collect();
+            assert!(lines.len() > 1);
+            for line in lines {
+                assert!(line.ends_with(&format!("{RESET}{heading_style} {RESET} ")), "{line:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn heading_styles_are_restored_after_inline_spans() {
+        let theme = Theme::glow_light();
+        for level in 1..=2 {
+            for title in ["**Bold** after", "*Italic* after", "`Code` after", "[Link](url) after"] {
+                let rendered = render_document(&format!("{} {title}", "#".repeat(level)), &theme, 18, 0);
+                let foreground = if level == 1 { theme.h1_fg } else { theme.heading_fg };
+                let heading_style = style(foreground, (level == 1).then_some(theme.h1_bg), true, false, false);
+                assert!(rendered.contains(&format!("{RESET}{heading_style}")), "{rendered:?}");
+                for line in rendered.lines().filter(|line| visible_width(line) > 2) {
+                    assert!(line.starts_with(&format!(" {heading_style}")), "{line:?}");
+                    assert!(line.ends_with(&format!("{RESET} ")), "{line:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_inline_styles_across_heading_continuations() {
+        let theme = Theme::glow_light();
+        for (title, expected_style) in [
+            ("**Alpha beta gamma delta**", BOLD.to_string()),
+            ("*Alpha beta gamma delta*", ITALIC.to_string()),
+            ("`Alpha beta gamma delta`", code_style(&theme)),
+        ] {
+            let content = render_inline(title, theme.heading_fg, &theme);
+            let chunks = wrap_styled_heading(&content, 12);
+            assert!(chunks.len() > 1);
+            assert!(chunks.iter().all(|chunk| visible_width(chunk) <= 12));
+            assert!(chunks.iter().all(|chunk| chunk.contains(&expected_style)), "{chunks:?}");
+        }
     }
 
     #[test]

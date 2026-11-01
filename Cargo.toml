@@ -11,4 +11,5 @@ path = "tools/md.rs"
 libc = "0.2"
 regex = "1.11"
 unicode-width = "0.2"
+unicode-segmentation = "1.12"
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }

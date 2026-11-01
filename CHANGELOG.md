@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Render triple-backtick inline code spans without mistaking them for fenced code blocks.
 - Wrap formatted headings and long unbroken title words using terminal-cell widths, preserving inline styles, heading backgrounds, and continuation alignment.
+- Reject malformed table delimiter rows safely instead of panicking on colon-only cells.
+- Track fenced-code marker characters and run lengths, supporting longer fences and rejecting mismatched or info-bearing closing lines.
+- Render paragraphs, lists, quotes, and table cells before wrapping so bold, italic, links, and code retain their formatting across lines.
+- Preserve meaningful inline-code spaces and literal backticks across adjacent spans with different delimiters; keep parenthesized inline math intact when it fits.
+- Measure and wrap complete Unicode graphemes, including joined emoji, consistently across text, code, tables, and built-in pager clipping and search prompts.
+- Wrap long table-cell content instead of truncating it, stack cells when columns cannot fit, and end tables before following blockquotes, lists, and headings.
+- Reduce margins and omit oversized heading markers on extremely narrow terminals instead of overflowing the viewport.
 
 ## [0.8.0] - 2026-10-01
 

@@ -3,9 +3,10 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::time::Duration;
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
-use super::terminal;
+use super::{terminal, visible_width, fit_prefix, wrap_styled_code};
 
 const RESET: &str = "\x1b[0m";
 
@@ -645,56 +646,25 @@ fn terminal_size() -> Option<(usize, usize)> {
     terminal::size().map(|(rows, columns)| (rows as usize, columns as usize))
 }
 
-fn visible_width(text: &str) -> usize {
-    let mut width = 0;
-    let mut escape = false;
-    for character in text.chars() {
-        if escape {
-            if character.is_ascii_alphabetic() {
-                escape = false;
-            }
-        } else if character == '\x1b' {
-            escape = true;
-        } else {
-            width += UnicodeWidthChar::width(character).unwrap_or(0);
-        }
-    }
-    width
-}
-
 fn truncate_ansi(text: &str, width: usize) -> String {
-    let mut output = String::new();
-    let mut used = 0;
-    let mut chars = text.chars().peekable();
-    while let Some(character) = chars.next() {
-        if character == '\x1b' {
-            output.push(character);
-            while let Some(control) = chars.next() {
-                output.push(control);
-                if control.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else if used + UnicodeWidthChar::width(character).unwrap_or(0) <= width {
-            output.push(character);
-            used += UnicodeWidthChar::width(character).unwrap_or(0);
-        } else {
-            break;
-        }
-    }
+    // Use the renderer's grapheme/ANSI logic too: scalar truncation can cut a
+    // joined emoji in half even when the complete glyph fits the viewport.
+    let mut output = wrap_styled_code(text, width).into_iter().next().unwrap_or_default();
     output.push_str(RESET);
     output
 }
 
 fn search_prompt_status(input: &str, columns: usize) -> String {
     // Keep the insertion point visible even when the query exceeds the screen width.
+    if columns == 0 { return String::new(); }
+    if columns == 1 { return "\x1b[27;38;5;250;48;5;0m▌\x1b[7;39;49m".to_string(); }
     let available = columns.saturating_sub(2);
     let mut suffix = Vec::new();
     let mut used = 0;
-    for character in input.chars().rev() {
-        let width = UnicodeWidthChar::width(character).unwrap_or(0);
+    for grapheme in input.graphemes(true).rev() {
+        let width = UnicodeWidthStr::width(grapheme);
         if used + width > available { break; }
-        suffix.push(character);
+        suffix.push(grapheme);
         used += width;
     }
     suffix.reverse();
@@ -704,7 +674,7 @@ fn search_prompt_status(input: &str, columns: usize) -> String {
 }
 
 fn truncate_plain(text: &str, width: usize) -> String {
-    text.chars().take(width).collect()
+    fit_prefix(text, width)
 }
 
 #[cfg(test)]
@@ -719,6 +689,18 @@ mod tests {
         let long = search_prompt_status("abcdefghij", 6);
         assert!(long.starts_with("/ghij\x1b[27;38;5;250;48;5;0m▌"));
         assert_eq!(visible_width(&long), 6);
+    }
+
+    #[test]
+    fn pager_clipping_and_search_prompt_preserve_complete_graphemes() {
+        let family = "👨‍👩‍👧‍👦";
+        let text = format!("\x1b[1m{family}end\x1b[0m");
+        assert_eq!(super::super::plain_text(&truncate_ansi(&text, 4)), format!("{family}en"));
+        assert_eq!(truncate_plain("漢字hello", 3), "漢");
+        let prompt = search_prompt_status(&format!("prefix{family}漢字"), 8);
+        assert!(prompt.starts_with(&format!("/{family}漢字")), "{prompt:?}");
+        assert_eq!(visible_width(&prompt), 8);
+        assert_eq!(visible_width(&search_prompt_status("query", 1)), 1);
     }
 
     #[test]

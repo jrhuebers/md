@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+use std::ops::Range;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::OnceLock;
@@ -12,7 +13,8 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
+use unicode_segmentation::UnicodeSegmentation;
 
 mod math;
 mod pager;
@@ -325,7 +327,7 @@ fn normalized_lines(input: &str) -> Vec<String> {
     let mut last_was_list = false;
     let mut at_document_start = true;
     let mut in_frontmatter = false;
-    let mut in_code = false;
+    let mut code_fence: Option<CodeFence> = None;
     for line in raw_lines {
         let trimmed = line.trim();
         if has_frontmatter && (at_document_start || in_frontmatter) {
@@ -339,11 +341,16 @@ fn normalized_lines(input: &str) -> Vec<String> {
             last_was_list = false;
             continue;
         }
-        if in_code || is_fence(line.trim_start()) {
+        if let Some(fence) = code_fence {
             lines.push(line.to_string());
-            if is_fence(line.trim_start()) {
-                in_code = !in_code;
-            }
+            if fence.closes(line.trim_start()) { code_fence = None; }
+            at_document_start = false;
+            last_was_list = false;
+            continue;
+        }
+        if let Some((fence, _)) = CodeFence::opening(line.trim_start()) {
+            lines.push(line.to_string());
+            code_fence = Some(fence);
             at_document_start = false;
             last_was_list = false;
             continue;
@@ -368,6 +375,11 @@ fn normalized_lines(input: &str) -> Vec<String> {
 }
 
 fn render_document(input: &str, theme: &Theme, terminal_width: usize, max_line_length: usize) -> String {
+    let terminal_width = terminal_width.max(1);
+    // Keep at least one content cell even when a terminal is narrower than its margins.
+    let mut theme = theme.clone();
+    theme.margin_left = theme.margin_left.min(terminal_width - 1);
+    theme.margin_right = theme.margin_right.min(terminal_width - 1 - theme.margin_left);
     let margin_width = theme.margin_left + theme.margin_right;
     let available = terminal_width.saturating_sub(margin_width);
     let column_width = if max_line_length == 0 {
@@ -376,7 +388,7 @@ fn render_document(input: &str, theme: &Theme, terminal_width: usize, max_line_l
         available.min(max_line_length)
     };
     let render_width = column_width + margin_width;
-    let rendered = render_markdown(input, theme, render_width);
+    let rendered = render_markdown(input, &theme, render_width);
     let outer_padding = terminal_width.saturating_sub(render_width) / 2;
     if outer_padding == 0 {
         return rendered;
@@ -402,7 +414,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
         && normalized.iter().skip(1).any(|line| line.trim() == "---");
     let mut in_frontmatter = has_frontmatter;
     let mut frontmatter_opening = has_frontmatter;
-    let mut in_code = false;
+    let mut code_fence: Option<CodeFence> = None;
     let mut code_highlighter = None;
     let mut math_block: Option<(String, String, String, bool)> = None;
     let mut previous_block: Option<BlockKind> = None;
@@ -431,23 +443,15 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
 
-        if is_fence(trimmed) {
+        if let Some(fence) = code_fence {
             previous_block = None;
-            flush_paragraph(&mut paragraph, &mut output, theme, width);
-            if in_code {
-                in_code = false;
+            if fence.closes(trimmed) {
+                code_fence = None;
                 code_highlighter = None;
-            } else {
-                in_code = true;
-                code_highlighter = fence_language(trimmed)
-                    .and_then(|language| make_code_highlighter(language, theme));
+                continue;
             }
-            continue;
-        }
-        if in_code {
-            previous_block = None;
             let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
-            let prefix = "  ";
+            let prefix = &"  "[..2.min(content_width.saturating_sub(1))];
             let content = if let Some(highlighter) = code_highlighter.as_mut() {
                 highlight_code_line(line, highlighter, theme)
             } else {
@@ -465,6 +469,14 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
                 rendered.push_str(RESET);
                 push_line(&mut output, &rendered, theme);
             }
+            continue;
+        }
+        if let Some((fence, info)) = CodeFence::opening(trimmed) {
+            previous_block = None;
+            flush_paragraph(&mut paragraph, &mut output, theme, width);
+            code_fence = Some(fence);
+            code_highlighter = info.split_whitespace().next()
+                .and_then(|language| make_code_highlighter(language, theme));
             continue;
         }
         if let Some((_, closing, _, quoted)) = math_block.as_ref() {
@@ -505,7 +517,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             continue;
         }
         suppress_blank = false;
-        if !in_code && math_block.is_none() {
+        if math_block.is_none() && !starts_non_table_block(line) {
             let header = table_row(line);
             let alignments = lines.peek().and_then(|candidate| table_alignments(candidate));
             if let (Some(header), Some(alignments)) = (header, alignments) {
@@ -513,6 +525,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
                     let _separator = lines.next();
                     let mut rows = Vec::new();
                     while let Some(candidate) = lines.peek() {
+                        if starts_non_table_block(candidate) { break; }
                         if let Some(row) = table_row(candidate) {
                             rows.push(row);
                             let _ = lines.next();
@@ -544,19 +557,19 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
             flush_paragraph(&mut paragraph, &mut output, theme, width);
             ensure_blank_line(&mut output, theme);
             // Continuations align under the first heading character, past the displayed marker.
-            let prefix = if level == 1 { " ".to_string() } else { format!("{} ", "#".repeat(level)) };
+            let mut prefix = if level == 1 { " ".to_string() } else { format!("{} ", "#".repeat(level)) };
             let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
-            let available = content_width.saturating_sub(prefix.len() + usize::from(level == 1)).max(1);
+            let trailing_padding = level == 1 && content_width >= 3;
+            if prefix.len() + 1 + usize::from(trailing_padding) > content_width {
+                prefix.clear(); // Prefer readable title text to an oversized marker.
+            }
+            let available = content_width.saturating_sub(prefix.len() + usize::from(trailing_padding)).max(1);
             // Measure the rendered text, not Markdown delimiters. This lets bold,
             // italic, code, and link text wrap without breaking their syntax.
             let foreground = if level == 1 { theme.h1_fg } else { theme.heading_fg };
             let heading_style = style(foreground, (level == 1).then_some(theme.h1_bg), true, false, false);
-            // Inline spans reset their styling when they end. Restore the heading's
-            // bold/background context too, and include it in continuation replay.
-            let inline = render_inline(heading.trim(), foreground, theme)
-                .replace(RESET, &format!("{RESET}{heading_style}"));
-            let content = format!("{heading_style}{inline}");
-            for (index, chunk) in wrap_styled_heading(&content, available).iter().enumerate() {
+            let content = render_inline_layout(heading.trim(), theme, &heading_style, false);
+            for (index, chunk) in content.wrap(available).iter().enumerate() {
                 let mut rendered = heading_style.clone();
                 if index == 0 {
                     rendered.push_str(&prefix);
@@ -564,7 +577,7 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
                     rendered.push_str(&" ".repeat(prefix.len()));
                 }
                 rendered.push_str(chunk);
-                if level == 1 {
+                if trailing_padding {
                     // Artificial breaks can end inside code or links; the padding
                     // belongs to the heading, not the active inline span.
                     rendered.push_str(RESET);
@@ -593,16 +606,18 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
                 flush_paragraph(&mut paragraph, &mut output, theme, width);
             }
             previous_block = Some(BlockKind::List);
-            let prefix = format!("{}{}", "  ".repeat(depth), marker);
-            let prefix_width = prefix.chars().count();
-            let available = width.saturating_sub(theme.margin_left + theme.margin_right + prefix_width).max(1);
-            for (index, chunk) in wrap_text(content, available).iter().enumerate() {
+            let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
+            let prefix = fit_prefix(&format!("{}{}", "  ".repeat(depth), marker), content_width.saturating_sub(1));
+            let prefix_width = visible_width(&prefix);
+            let available = content_width.saturating_sub(prefix_width).max(1);
+            let content = render_inline_layout(content, theme, &fg(theme.normal_fg), false);
+            for (index, chunk) in content.wrap(available).iter().enumerate() {
                 let line_prefix = if index == 0 {
                     prefix.clone()
                 } else {
                     " ".repeat(prefix_width)
                 };
-                let rendered = format!("{}{}{}", fg(theme.normal_fg), line_prefix, render_inline(chunk, theme.normal_fg, theme));
+                let rendered = format!("{}{}{}", fg(theme.normal_fg), line_prefix, chunk);
                 push_line(&mut output, &format!("{}{}", rendered, RESET), theme);
             }
             continue;
@@ -625,11 +640,12 @@ fn render_markdown(input: &str, theme: &Theme, width: usize) -> String {
                 }
                 continue;
             }
-            let prefix_width = 2;
-            let available = width.saturating_sub(theme.margin_left + theme.margin_right + prefix_width).max(1);
-            for chunk in wrap_text(content.trim(), available).iter() {
-                let prefix = "│ ";
-                let rendered = format!("{}{}{}{}", fg(theme.normal_fg), DIM, prefix, render_inline(chunk, theme.normal_fg, theme));
+            let content_width = width.saturating_sub(theme.margin_left + theme.margin_right);
+            let prefix = fit_prefix("│ ", content_width.saturating_sub(1));
+            let available = content_width.saturating_sub(visible_width(&prefix)).max(1);
+            let content = render_inline_layout(content.trim(), theme, &format!("{}{DIM}", fg(theme.normal_fg)), false);
+            for chunk in content.wrap(available).iter() {
+                let rendered = format!("{}{}{}{}", fg(theme.normal_fg), DIM, prefix, chunk);
                 push_line(&mut output, &format!("{}{}", rendered, RESET), theme);
             }
             continue;
@@ -703,8 +719,9 @@ fn flush_paragraph(paragraph: &mut Vec<String>, output: &mut String, theme: &The
     }
     let joined = join_paragraph(paragraph);
     let available = width.saturating_sub(theme.margin_left + theme.margin_right).max(1);
-    for chunk in wrap_text(&joined, available) {
-        let rendered = format!("{}{}{}", fg(theme.normal_fg), render_inline(&chunk, theme.normal_fg, theme), RESET);
+    let content = render_inline_layout(&joined, theme, &fg(theme.normal_fg), false);
+    for chunk in content.wrap(available) {
+        let rendered = format!("{}{}{}", fg(theme.normal_fg), chunk, RESET);
         push_line(output, &rendered, theme);
     }
     paragraph.clear();
@@ -722,34 +739,32 @@ enum TableAlignment {
 fn table_row(line: &str) -> Option<Vec<String>> {
     let mut cells = Vec::new();
     let mut cell = String::new();
-    let mut in_code = false;
-    let mut escaped = false;
     let mut has_pipe = false;
-
-    for character in line.trim().chars() {
-        if escaped {
-            if character == '|' {
-                cell.push('|');
+    let line = line.trim();
+    let mut position = 0;
+    while position < line.len() {
+        if let Some((_, end, _)) = code_span_at(line, position) {
+            cell.push_str(&line[position..end].replace("\\|", "|"));
+            position = end;
+            continue;
+        }
+        let character = line[position..].chars().next().unwrap();
+        position += character.len_utf8();
+        if character == '\\' {
+            if let Some(next) = line[position..].chars().next() {
+                if next != '|' { cell.push('\\'); }
+                cell.push(next);
+                position += next.len_utf8();
             } else {
                 cell.push('\\');
-                cell.push(character);
             }
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if character == '`' {
-            in_code = !in_code;
-            cell.push(character);
-        } else if character == '|' && !in_code {
+        } else if character == '|' {
             has_pipe = true;
             cells.push(cell.trim().to_string());
             cell.clear();
         } else {
             cell.push(character);
         }
-    }
-    if escaped {
-        cell.push('\\');
     }
     cells.push(cell.trim().to_string());
     if !has_pipe {
@@ -773,7 +788,7 @@ fn table_alignments(line: &str) -> Option<Vec<TableAlignment>> {
         let right = cell.ends_with(':');
         let start = usize::from(left);
         let end = cell.len().saturating_sub(usize::from(right));
-        let dashes = &cell[start..end];
+        let dashes = cell.get(start..end)?;
         if dashes.len() < 3 || !dashes.chars().all(|character| character == '-') {
             return None;
         }
@@ -801,12 +816,13 @@ fn render_table(
     }
 
     let mut column_widths = vec![1; columns];
-    for (column, cell) in header.iter().enumerate() {
-        column_widths[column] = column_widths[column].max(table_cell_width(cell, theme));
-    }
-    for row in &rows {
+    let mut minimum_widths = vec![1; columns];
+    for row in std::iter::once(&header).chain(rows.iter()) {
         for (column, cell) in row.iter().enumerate() {
-            column_widths[column] = column_widths[column].max(table_cell_width(cell, theme));
+            let rendered = render_inline(cell, theme.normal_fg, theme);
+            let plain = plain_text(&rendered);
+            column_widths[column] = column_widths[column].max(UnicodeWidthStr::width(plain.as_str()));
+            minimum_widths[column] = minimum_widths[column].max(plain.graphemes(true).map(UnicodeWidthStr::width).max().unwrap_or(1));
         }
     }
 
@@ -814,12 +830,27 @@ fn render_table(
     // is shared by columns, shrinking the widest columns first when needed.
     let available = width.saturating_sub(theme.margin_left + theme.margin_right);
     let overhead = columns.saturating_mul(2).saturating_sub(1);
-    let content_width = available.saturating_sub(overhead).max(columns);
+    if available < overhead + minimum_widths.iter().sum::<usize>() {
+        // When columns cannot fit even one glyph each, stack cells rather than
+        // clip their contents or draw a table wider than the viewport.
+        ensure_blank_line(output, theme);
+        for row in std::iter::once(&header).chain(rows.iter()) {
+            for cell in row {
+                let content = render_inline_layout(cell, theme, &fg(theme.normal_fg), false);
+                for line in content.wrap(available.max(1)) {
+                    push_line(output, &format!("{line}{RESET}"), theme);
+                }
+            }
+            ensure_blank_line(output, theme);
+        }
+        return;
+    }
+    let content_width = available.saturating_sub(overhead);
     while column_widths.iter().sum::<usize>() > content_width {
         let widest = column_widths
             .iter()
             .enumerate()
-            .filter(|(_, width)| **width > 1)
+            .filter(|(column, width)| **width > minimum_widths[*column])
             .max_by_key(|(_, width)| **width)
             .map(|(column, _)| column);
         let Some(column) = widest else { break };
@@ -840,10 +871,6 @@ fn render_table(
     ensure_blank_line(output, theme);
 }
 
-fn table_cell_width(cell: &str, theme: &Theme) -> usize {
-    visible_width(&render_inline(cell, theme.normal_fg, theme)).max(1)
-}
-
 fn render_table_row(
     output: &mut String,
     cells: &[String],
@@ -854,7 +881,8 @@ fn render_table_row(
     let mut rendered_cells = Vec::new();
     let mut row_height = 1;
     for (column, cell) in cells.iter().enumerate() {
-        let lines = wrap_text(cell, column_widths[column]);
+        let content = render_inline_layout(cell, theme, &fg(theme.normal_fg), false);
+        let lines = content.wrap(column_widths[column]);
         row_height = row_height.max(lines.len());
         rendered_cells.push(lines);
     }
@@ -865,10 +893,8 @@ fn render_table_row(
             if column > 0 {
                 rendered.push_str(&format!("{}│{}", fg(theme.rule_fg), RESET));
             }
-            let source = rendered_cells[column].get(line_number).map(String::as_str).unwrap_or("");
-            let styled = render_inline(source, theme.normal_fg, theme);
-            let styled = truncate_ansi(&styled, column_widths[column]);
-            let used = visible_width(&styled);
+            let styled = rendered_cells[column].get(line_number).map(String::as_str).unwrap_or("");
+            let used = visible_width(styled);
             let padding = column_widths[column].saturating_sub(used);
             let (left, right) = match alignments[column] {
                 TableAlignment::Left => (0, padding),
@@ -877,7 +903,8 @@ fn render_table_row(
             };
             rendered.push(' ');
             rendered.push_str(&" ".repeat(left));
-            rendered.push_str(&styled);
+            rendered.push_str(styled);
+            rendered.push_str(RESET);
             rendered.push_str(&" ".repeat(right));
             rendered.push_str(RESET);
         }
@@ -885,73 +912,54 @@ fn render_table_row(
     }
 }
 
-fn visible_width(text: &str) -> usize {
-    let mut width = 0;
-    let mut bytes = text.as_bytes();
-    while !bytes.is_empty() {
-        if bytes[0] == 0x1b {
-            if bytes.get(1) == Some(&b'[') {
-                let end = bytes[2..].iter().position(|byte| (0x40..=0x7e).contains(byte)).map(|index| index + 3).unwrap_or(bytes.len());
-                bytes = &bytes[end..];
-            } else if bytes.get(1) == Some(&b']') {
-                let end = bytes[2..].iter().position(|byte| *byte == 0x07).map(|index| index + 3).unwrap_or(bytes.len());
-                bytes = &bytes[end..];
-            } else {
-                bytes = &bytes[1..];
+// Return the end of one terminal escape sequence without consuming visible text.
+fn ansi_end(text: &str, position: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    if bytes.get(position) != Some(&0x1b) { return None; }
+    match bytes.get(position + 1) {
+        Some(b'[') => Some(bytes[position + 2..].iter().position(|byte| (0x40..=0x7e).contains(byte))
+            .map_or(bytes.len(), |offset| position + 3 + offset)),
+        Some(b']') => {
+            let mut end = position + 2;
+            while end < bytes.len() {
+                if bytes[end] == 7 { return Some(end + 1); }
+                if bytes[end] == 0x1b && bytes.get(end + 1) == Some(&b'\\') { return Some(end + 2); }
+                end += 1;
             }
-        } else if let Some(character) = text[text.len() - bytes.len()..].chars().next() {
-            width += UnicodeWidthChar::width(character).unwrap_or(0);
-            bytes = &bytes[character.len_utf8()..];
-        } else {
-            break;
+            Some(bytes.len())
         }
+        _ => Some(position + 1),
     }
-    width
 }
 
-fn truncate_ansi(text: &str, width: usize) -> String {
-    if visible_width(text) <= width {
-        return text.to_string();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    let mut result = String::new();
-    let mut visible = 0;
+fn plain_text(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
     let mut position = 0;
-    while position < text.len() && visible + 1 < width {
-        let bytes = text.as_bytes();
-        if bytes[position] == 0x1b {
-            let start = position;
-            position += 1;
-            if bytes.get(position) == Some(&b'[') {
-                position += 1;
-                while position < text.len() {
-                    let byte = bytes[position];
-                    position += 1;
-                    if (0x40..=0x7e).contains(&byte) {
-                        break;
-                    }
-                }
-            } else if bytes.get(position) == Some(&b']') {
-                position += 1;
-                while position < text.len() {
-                    let byte = bytes[position];
-                    position += 1;
-                    if byte == 0x07 {
-                        break;
-                    }
-                }
-            }
-            result.push_str(&text[start..position]);
-            continue;
+    while position < text.len() {
+        if let Some(end) = ansi_end(text, position) {
+            position = end;
+        } else {
+            let character = text[position..].chars().next().unwrap();
+            plain.push(character);
+            position += character.len_utf8();
         }
-        let character = text[position..].chars().next().unwrap();
-        result.push(character);
-        position += character.len_utf8();
-        visible += 1;
     }
-    result.push('…');
+    plain
+}
+
+fn visible_width(text: &str) -> usize {
+    UnicodeWidthStr::width(plain_text(text).as_str())
+}
+
+fn fit_prefix(prefix: &str, budget: usize) -> String {
+    let mut result = String::new();
+    let mut used = 0;
+    for grapheme in prefix.graphemes(true) {
+        let width = UnicodeWidthStr::width(grapheme);
+        if used + width > budget { break; }
+        result.push_str(grapheme);
+        used += width;
+    }
     result
 }
 
@@ -985,203 +993,6 @@ fn ensure_blank_line(output: &mut String, theme: &Theme) {
     }
 }
 
-struct WrapToken {
-    text: String,
-    width: usize,
-    code: usize,
-    glued: bool,
-}
-
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0;
-    let mut code_open = 0;
-    for token in paragraph_tokens(text) {
-        let separator_width = usize::from(!current.is_empty() && !token.glued);
-        if !current.is_empty() && current_width + separator_width + token.width > width {
-            if code_open > 0 {
-                current.push_str(&"`".repeat(code_open));
-                code_open = 0;
-            }
-            lines.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-        if token.code > 0 {
-            if !current.is_empty() && !token.glued {
-                current.push(' ');
-                current_width += 1;
-            }
-            if code_open == 0 {
-                current.push_str(&"`".repeat(token.code));
-                code_open = token.code;
-            }
-            current.push_str(&token.text);
-            current_width += token.width;
-        } else {
-            if code_open > 0 {
-                current.push_str(&"`".repeat(code_open));
-                code_open = 0;
-            }
-            if !current.is_empty() && !token.glued {
-                current.push(' ');
-                current_width += 1;
-            }
-            current.push_str(&token.text);
-            current_width += token.width;
-        }
-    }
-    if code_open > 0 {
-        current.push_str(&"`".repeat(code_open));
-    }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
-    }
-    lines
-}
-
-fn paragraph_tokens(text: &str) -> Vec<WrapToken> {
-    let mut tokens = Vec::new();
-    let mut position = 0;
-    while position < text.len() {
-        let whitespace_start = position;
-        while position < text.len() && text.as_bytes()[position].is_ascii_whitespace() {
-            position += 1;
-        }
-        if position >= text.len() {
-            break;
-        }
-        let glued = !tokens.is_empty() && position == whitespace_start;
-        let start = position;
-        if text[position..].starts_with("**") || text[position..].starts_with("__") {
-            let marker = &text[position..position + 2];
-            if let Some(end) = text[position + 2..].find(marker) {
-                position += 2 + end + 2;
-                consume_punctuation(text, &mut position);
-                let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: word.chars().count().saturating_sub(4), code: 0, glued });
-                continue;
-            }
-        }
-        if let Some((content, end, marker_len)) = code_span_at(text, position) {
-            let mut parts = content.split_whitespace().peekable();
-            if parts.peek().is_none() {
-                tokens.push(WrapToken { text: String::new(), width: 0, code: marker_len, glued });
-            } else {
-                let mut first = true;
-                for part in parts {
-                    tokens.push(WrapToken {
-                        text: part.to_string(),
-                        width: part.chars().count(),
-                        code: marker_len,
-                        glued: if first { glued } else { false },
-                    });
-                    first = false;
-                }
-            }
-            position = end;
-            let punctuation_start = position;
-            consume_punctuation(text, &mut position);
-            if position > punctuation_start {
-                tokens.push(WrapToken {
-                    text: text[punctuation_start..position].to_string(),
-                    width: position - punctuation_start,
-                    code: 0,
-                    glued: true,
-                });
-            }
-            continue;
-        }
-        if text[position..].starts_with("$$") {
-            if let Some(end) = text[position + 2..].find("$$") {
-                position += 2 + end + 2;
-                consume_punctuation(text, &mut position);
-                let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
-                continue;
-            }
-        } else if text[position..].starts_with('$') {
-            if let Some(end) = find_unescaped(text, position + 1, '$') {
-                position = end + 1;
-                consume_punctuation(text, &mut position);
-                let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
-                continue;
-            }
-        } else if text[position..].starts_with("\\(") {
-            if let Some(end) = text[position + 2..].find("\\)") {
-                position += 2 + end + 2;
-                consume_punctuation(text, &mut position);
-                let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
-                continue;
-            }
-        } else if text[position..].starts_with("\\[") {
-            if let Some(end) = text[position + 2..].find("\\]") {
-                position += 2 + end + 2;
-                consume_punctuation(text, &mut position);
-                let word = &text[start..position];
-                tokens.push(WrapToken { text: word.to_string(), width: rendered_word_width(word), code: 0, glued });
-                continue;
-            }
-        }
-        while position < text.len() && !text.as_bytes()[position].is_ascii_whitespace() {
-            // Split a word before an embedded code span, e.g. "(`git ...`)".
-            // Otherwise wrapping can separate its backticks before render_inline sees them.
-            if position > start && text.as_bytes()[position] == b'`' && text[position + 1..].contains('`') {
-                break;
-            }
-            position += 1;
-        }
-        let word = &text[start..position];
-        tokens.push(WrapToken { text: word.to_string(), width: word.chars().count(), code: 0, glued });
-    }
-    tokens
-}
-
-fn rendered_word_width(word: &str) -> usize {
-    if word.starts_with("$$") {
-        if let Some(end) = word[2..].find("$$") {
-            let end = end + 2;
-            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
-        }
-    } else if word.starts_with('$') {
-        if let Some(end) = find_unescaped(word, 1, '$') {
-            return math::render_inline(&word[1..end]).chars().count() + word[end + 1..].chars().count();
-        }
-    } else if word.starts_with("\\(") {
-        if let Some(end) = word[2..].find("\\)") {
-            let end = end + 2;
-            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
-        }
-    } else if word.starts_with("\\[") {
-        if let Some(end) = word[2..].find("\\]") {
-            let end = end + 2;
-            return math::render_inline(&word[2..end]).chars().count() + word[end + 2..].chars().count();
-        }
-    }
-    word.chars().count()
-}
-
-fn consume_punctuation(text: &str, position: &mut usize) {
-    while *position < text.len() && matches!(text.as_bytes()[*position], b'.' | b',' | b';' | b':' | b'!' | b'?') {
-        *position += 1;
-    }
-}
-
-fn find_unescaped(text: &str, start: usize, delimiter: char) -> Option<usize> {
-    let mut search = start;
-    while let Some(offset) = text[search..].find(delimiter) {
-        let position = search + offset;
-        let backslashes = text[..position].chars().rev().take_while(|character| *character == '\\').count();
-        if backslashes % 2 == 0 {
-            return Some(position);
-        }
-        search = position + delimiter.len_utf8();
-    }
-    None
-}
-
 fn fg(color: u8) -> String {
     format!("\x1b[38;5;{color}m")
 }
@@ -1203,18 +1014,33 @@ fn style(foreground: u8, background: Option<u8>, bold: bool, italic: bool, under
     result
 }
 
-fn restore(foreground: u8) -> String {
-    format!("{RESET}{}", fg(foreground))
+#[derive(Clone, Copy)]
+struct CodeFence {
+    marker: u8,
+    length: usize,
 }
 
-fn is_fence(line: &str) -> bool {
-    // A backtick fence cannot contain backticks in its info string.
-    // In particular, ```command``` is an inline code span, not a fence.
-    if let Some(info) = line.strip_prefix("```") {
-        !info.contains('`')
-    } else {
-        line.starts_with("~~~")
+impl CodeFence {
+    fn opening(line: &str) -> Option<(Self, &str)> {
+        let marker = *line.as_bytes().first()?;
+        if marker != b'`' && marker != b'~' { return None; }
+        let length = line.bytes().take_while(|byte| *byte == marker).count();
+        let info = &line[length..];
+        if length < 3 || (marker == b'`' && info.contains('`')) { return None; }
+        Some((Self { marker, length }, info))
     }
+
+    fn closes(self, line: &str) -> bool {
+        let length = line.bytes().take_while(|byte| *byte == self.marker).count();
+        length >= self.length && line[length..].trim().is_empty()
+    }
+}
+
+fn starts_non_table_block(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.is_empty() || heading(trimmed).is_some() || quote_content(trimmed).is_some()
+        || list_item(line).is_some() || is_rule(trimmed)
+        || CodeFence::opening(trimmed).is_some() || display_math_delimiter(trimmed).is_some()
 }
 
 // Locate a code span closed by an exact matching run of backticks.
@@ -1238,11 +1064,6 @@ fn code_style(theme: &Theme) -> String {
     style(theme.inline_code_fg, Some(theme.inline_code_bg), false, false, false)
 }
 
-fn fence_language(fence: &str) -> Option<&str> {
-    let marker = if fence.starts_with('~') { "~~~" } else { "```" };
-    fence.strip_prefix(marker)?.split_whitespace().next().filter(|language| !language.is_empty())
-}
-
 fn make_code_highlighter(language: &str, theme: &Theme) -> Option<HighlightLines<'static>> {
     static THEMES: OnceLock<ThemeSet> = OnceLock::new();
     let syntaxes = syntax_set();
@@ -1253,37 +1074,53 @@ fn make_code_highlighter(language: &str, theme: &Theme) -> Option<HighlightLines
     Some(HighlightLines::new(syntax, syntax_theme))
 }
 
-// Prefer word boundaries for headings, then hard-wrap oversized words using the
-// same terminal-cell-aware, style-preserving wrapper as fenced code.
-fn wrap_styled_heading(content: &str, width: usize) -> Vec<String> {
+// Lay out rendered text, never raw Markdown. Math ranges suppress internal word
+// breaks; oversized words are still split safely at grapheme boundaries.
+fn wrap_styled_text(content: &str, width: usize, protected: &[Range<usize>]) -> Vec<String> {
+    if !content.contains('\n') && visible_width(content) <= width {
+        return vec![content.to_string()];
+    }
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    let mut in_space = false;
+    for (position, character) in content.char_indices() {
+        let space = character.is_ascii_whitespace() && !protected.iter().any(|range| range.contains(&position));
+        if space != in_space {
+            tokens.push((&content[start..position], in_space));
+            start = position;
+            in_space = space;
+        }
+    }
+    tokens.push((&content[start..], in_space));
+
     let mut words = String::new();
+    let mut separator = String::new();
     let mut used = 0;
     let mut has_word = false;
-    for word in content.split_ascii_whitespace() {
-        let word_width = visible_width(word);
-        // Closing/reset sequences after trailing styled whitespace are not words.
-        // Do not confuse actual zero-width text (e.g. combining marks) with SGR.
-        let mut text = word;
-        while let Some(rest) = text.strip_prefix("\x1b[") {
-            let Some(end) = rest.find('m') else { break };
-            text = &rest[end + 1..];
+    for (word, space) in tokens {
+        if space {
+            separator.push_str(word);
+            continue;
         }
-        if text.is_empty() {
+        // SGR-only fragments are not words, but a combining mark is real text.
+        if plain_text(word).is_empty() {
             words.push_str(word);
             continue;
         }
-        if has_word && used + 1 + word_width > width {
+        let word_width = visible_width(word);
+        let separator_width = visible_width(&separator);
+        if has_word && used + separator_width + word_width > width {
             words.push('\n');
             used = 0;
         } else if has_word {
-            words.push(' ');
-            used += 1;
+            words.push_str(&separator);
+            used += separator_width;
         }
+        separator.clear();
         words.push_str(word);
         has_word = true;
         used += word_width;
         if word_width > width {
-            // A short word can still fit on the final hard-wrapped fragment.
             used = wrap_styled_code(word, width).last().map_or(0, |line| visible_width(line));
         }
     }
@@ -1298,55 +1135,68 @@ fn wrap_styled_code(content: &str, width: usize) -> Vec<String> {
     let mut current = String::new();
     let mut active_style = String::new();
     let mut used = 0;
-    let mut chars = content.chars();
-    while let Some(character) = chars.next() {
-        if character == '\x1b' {
-            let mut escape = String::from("\x1b");
-            if let Some(kind) = chars.next() {
-                escape.push(kind);
-                if kind == '[' {
-                    for control in chars.by_ref() {
-                        escape.push(control);
-                        if (0x40..=0x7e).contains(&(control as u32)) { break; }
-                    }
-                }
+    let mut position = 0;
+    // Segment the visible string, not ANSI-separated substrings: style changes
+    // between a base character and its combining mark must not split a grapheme.
+    let plain = plain_text(content);
+    for grapheme in plain.graphemes(true) {
+        let inherited_style = active_style.clone();
+        let start = position;
+        let mut bytes = 0;
+        while bytes < grapheme.len() {
+            if let Some(end) = ansi_end(content, position) {
+                let escape = &content[position..end];
+                if escape == RESET || escape == "\x1b[m" { active_style.clear(); }
+                else if escape.ends_with('m') { active_style.push_str(escape); }
+                position = end;
+            } else {
+                let length = content[position..].chars().next().unwrap().len_utf8();
+                position += length;
+                bytes += length;
             }
-            if escape == RESET || escape == "\x1b[m" { active_style.clear(); }
-            else if escape.ends_with('m') { active_style.push_str(&escape); }
-            current.push_str(&escape);
-            continue;
         }
-        if character == '\n' {
+        let raw = &content[start..position];
+        if grapheme == "\n" || grapheme == "\r\n" {
+            // Keep any style changes immediately before the newline.
+            current.push_str(raw.trim_end_matches(['\r', '\n']));
             chunks.push(std::mem::take(&mut current));
             current.push_str(&active_style);
             used = 0;
-        } else if character == '\t' {
+            continue;
+        }
+        if grapheme == "\t" {
+            current.push_str(raw.trim_end_matches('\t'));
             let spaces = 4 - used % 4;
             for _ in 0..spaces {
-                push_code_character(' ', width, &active_style, &mut current, &mut used, &mut chunks);
+                if used == width {
+                    chunks.push(std::mem::take(&mut current));
+                    current.push_str(&active_style);
+                    used = 0;
+                }
+                current.push(' ');
+                used += 1;
             }
+            continue;
+        }
+        let cell_width = UnicodeWidthStr::width(grapheme);
+        if used + cell_width > width && used > 0 {
+            chunks.push(std::mem::take(&mut current));
+            current.push_str(&inherited_style);
+            used = 0;
+        }
+        if cell_width > width {
+            // No terminal can fit a two-cell glyph into a one-cell column.
+            current.push_str(&active_style);
+            current.push('…');
+            used += 1;
         } else {
-            push_code_character(character, width, &active_style, &mut current, &mut used, &mut chunks);
+            current.push_str(raw);
+            used += cell_width;
         }
     }
+    current.push_str(&content[position..]);
     chunks.push(current);
     chunks
-}
-
-fn push_code_character(character: char, width: usize, active_style: &str, current: &mut String, used: &mut usize, chunks: &mut Vec<String>) {
-    let cell_width = UnicodeWidthChar::width(character).unwrap_or(0);
-    if *used + cell_width > width && *used > 0 {
-        chunks.push(std::mem::take(current));
-        current.push_str(active_style);
-        *used = 0;
-    }
-    if cell_width > width {
-        current.push('…');
-        *used += 1;
-    } else {
-        current.push(character);
-        *used += cell_width;
-    }
 }
 
 fn highlight_code_line(line: &str, highlighter: &mut HighlightLines<'static>, theme: &Theme) -> String {
@@ -1449,22 +1299,45 @@ fn underscore_in_word(input: &str, index: usize) -> bool {
         && next.is_some_and(|character| character.is_alphanumeric())
 }
 
-fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
-    render_inline_with_bold(input, base_foreground, theme, false)
+#[derive(Default)]
+struct RenderedInline {
+    text: String,
+    // Keep math intact when it fits and never discard meaningful code-space runs.
+    protected: Vec<Range<usize>>,
 }
 
-fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold_active: bool) -> String {
-    let mut output = String::with_capacity(input.len() + 16);
-    output.push_str(&fg(base_foreground));
+impl RenderedInline {
+    fn push_str(&mut self, text: &str) { self.text.push_str(text); }
+    fn push(&mut self, character: char) { self.text.push(character); }
+    fn append(&mut self, other: Self) {
+        let offset = self.text.len();
+        self.protected.extend(other.protected.into_iter().map(|range| range.start + offset..range.end + offset));
+        self.text.push_str(&other.text);
+    }
+
+    fn wrap(&self, width: usize) -> Vec<String> {
+        wrap_styled_text(&self.text, width, &self.protected)
+    }
+}
+
+fn render_inline(input: &str, base_foreground: u8, theme: &Theme) -> String {
+    render_inline_layout(input, theme, &fg(base_foreground), false).text
+}
+
+fn render_inline_layout(input: &str, theme: &Theme, context: &str, bold_active: bool) -> RenderedInline {
+    let mut output = RenderedInline::default();
+    output.push_str(context);
     let mut index = 0;
     while index < input.len() {
         let rest = &input[index..];
         if let Some((source, consumed)) = inline_math_at(input, index) {
+            let start = output.text.len();
             if math::enabled() {
                 output.push_str(&math::render_inline(source));
             } else {
                 output.push_str(&input[index..index + consumed]);
             }
+            output.protected.push(start..output.text.len());
             index += consumed;
             continue;
         }
@@ -1477,8 +1350,8 @@ fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold
             let marker = &input[index..index + 2];
             if let Some(end) = input[index + 2..].find(marker) {
                 output.push_str(BOLD);
-                output.push_str(&render_inline_with_bold(&input[index + 2..index + 2 + end], base_foreground, theme, true));
-                output.push_str(&restore_inline(base_foreground, bold_active));
+                output.append(render_inline_layout(&input[index + 2..index + 2 + end], theme, context, true));
+                output.push_str(&restore_inline(context, bold_active));
                 index += end + 4;
             } else {
                 output.push_str(marker);
@@ -1488,9 +1361,29 @@ fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold
         }
         if let Some((content, end, _)) = code_span_at(input, index) {
             output.push_str(&code_style(theme));
+            let content = content.replace('\n', " ");
+            let content = if content.starts_with(' ') && content.ends_with(' ') && content.chars().any(|c| c != ' ') {
+                &content[1..content.len() - 1]
+            } else { &content };
+            let offset = output.text.len();
             output.push_str(content);
-            output.push_str(&restore_inline(base_foreground, bold_active));
+            let mut position = 0;
+            while position < content.len() {
+                if content.as_bytes()[position] != b' ' { position += 1; continue; }
+                let start = position;
+                while position < content.len() && content.as_bytes()[position] == b' ' { position += 1; }
+                if position - start > 1 || start == 0 || position == content.len() {
+                    output.protected.push(offset + start..offset + position);
+                }
+            }
+            output.push_str(&restore_inline(context, bold_active));
             index = end;
+            continue;
+        }
+        if rest.starts_with('`') {
+            let length = rest.bytes().take_while(|byte| *byte == b'`').count();
+            output.push_str(&rest[..length]);
+            index += length;
             continue;
         }
         if rest.starts_with('[') {
@@ -1504,7 +1397,7 @@ fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold
                     output.push_str(" <");
                     output.push_str(&input[close + 2..end]);
                     output.push_str(">");
-                    output.push_str(&restore(base_foreground));
+                    output.push_str(&restore_inline(context, bold_active));
                     index = end + 1;
                     continue;
                 }
@@ -1519,8 +1412,8 @@ fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold
             let marker = &input[index..index + 1];
             if let Some(end) = input[index + 1..].find(marker) {
                 output.push_str(ITALIC);
-                output.push_str(&input[index + 1..index + 1 + end]);
-                output.push_str(&restore_inline(base_foreground, bold_active));
+                output.append(render_inline_layout(&input[index + 1..index + 1 + end], theme, &format!("{context}{ITALIC}"), bold_active));
+                output.push_str(&restore_inline(context, bold_active));
                 index += end + 2;
             } else {
                 output.push_str(marker);
@@ -1535,8 +1428,8 @@ fn render_inline_with_bold(input: &str, base_foreground: u8, theme: &Theme, bold
     output
 }
 
-fn restore_inline(foreground: u8, bold_active: bool) -> String {
-    let mut output = restore(foreground);
+fn restore_inline(context: &str, bold_active: bool) -> String {
+    let mut output = format!("{RESET}{context}");
     if bold_active {
         output.push_str(BOLD);
     }
@@ -1918,6 +1811,175 @@ fn shell_words(input: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
 
+    fn plain_render(source: &str, width: usize) -> String {
+        let mut theme = Theme::glow_light();
+        theme.margin_left = 0;
+        theme.margin_right = 0;
+        plain_text(&render_document(source, &theme, width, 0))
+    }
+
+    #[test]
+    fn malformed_table_delimiters_remain_text_instead_of_panicking() {
+        for delimiter in [":", "::", ":-", "-:", "漢字"] {
+            let source = format!("A | B\n{delimiter} | ---\nvalue | next");
+            assert!(table_alignments(&format!("{delimiter} | ---")).is_none());
+            let plain = plain_render(&source, 80);
+            assert!(plain.contains("value | next"), "{plain}");
+        }
+    }
+
+    #[test]
+    fn fences_track_marker_length_and_valid_closing_lines() {
+        for marker in ['`', '~'] {
+            for length in 3..=8 {
+                let opening = marker.to_string().repeat(length);
+                let shorter = marker.to_string().repeat(length - 1);
+                let other = if marker == '`' { "~~~" } else { "```" };
+                let source = format!("{opening}text\n{shorter}\n{other}\n{opening}not-a-close\n**literal**\n{opening}  \n\n**After.**");
+                let plain = plain_render(&source, 80);
+                assert!(plain.contains(&shorter), "{source}: {plain}");
+                assert!(plain.contains(other), "{source}: {plain}");
+                assert!(plain.contains(&format!("{opening}not-a-close")), "{source}: {plain}");
+                assert!(plain.contains("**literal**"), "{source}: {plain}");
+                assert!(plain.lines().any(|line| line == "After."), "{source}: {plain}");
+            }
+        }
+        let plain = plain_render("````python\nprint(\"hello\")\n`````\n\nAfter.", 80);
+        assert!(plain.contains("print(\"hello\")"));
+        assert!(!plain.contains("python"));
+        assert!(plain.lines().any(|line| line == "After."));
+    }
+
+    #[test]
+    fn paragraph_markup_is_rendered_before_wrapping() {
+        for (source, expected) in [
+            ("**one two three four**", "one two three four"),
+            ("*one two three four*", "one two three four"),
+            ("[one two three four](https://x)", "one two three four <https://x>"),
+        ] {
+            let plain = plain_render(source, 12);
+            let joined = plain.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert_eq!(joined, expected);
+            assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= 12), "{plain}");
+        }
+    }
+
+    #[test]
+    fn list_quote_and_table_cells_share_formatted_wrapping() {
+        for source in [
+            "- **one two three four five six**",
+            "> *one two three four five six*",
+            "| A |\n| --- |\n| [one two three four five six](https://x) |",
+        ] {
+            let plain = plain_render(source, 12);
+            assert!(!plain.contains('*') && !plain.contains('[') && !plain.contains("]("), "{plain}");
+            assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= 12), "{plain}");
+            let words = plain.split_whitespace().collect::<Vec<_>>();
+            for word in ["one", "two", "three", "four", "five", "six"] {
+                assert!(words.contains(&word), "missing {word}: {plain}");
+            }
+        }
+    }
+
+    #[test]
+    fn inline_code_preserves_spaces_and_independent_delimiters() {
+        for (source, expected) in [
+            ("Use `printf \"a  b\"` here.", "Use printf \"a  b\" here."),
+            ("`a` ``b`c``", "a b`c"),
+            ("Use `` ` `` here.", "Use ` here."),
+            ("`  `", "  "),
+            ("`` a ` b ``", "a ` b"),
+        ] {
+            let plain = plain_render(source, 80);
+            assert_eq!(plain.lines().nth(1).unwrap(), expected, "{source}");
+        }
+        let theme = Theme::glow_light();
+        let content = render_inline("`a` ``b`c``", theme.normal_fg, &theme);
+        assert!(content.contains(&format!("{}b`c", code_style(&theme))));
+        for source in ["`a     b`", "`     `", "` leading`", "`trailing `"] {
+            let content = render_inline_layout(source, &theme, &fg(theme.normal_fg), false);
+            let expected = plain_text(&content.text);
+            let actual: String = content.wrap(3).iter().map(|chunk| plain_text(chunk)).collect();
+            assert_eq!(actual, expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn parenthesized_math_stays_intact_when_wrapping() {
+        for source in [
+            "before ($a + b + c$) after",
+            "before **($a + b + c$)** after",
+            "before *($a + b + c$)* after",
+        ] {
+            let plain = plain_render(source, 12);
+            assert!(plain.lines().any(|line| line == "(a + b + c)"), "{plain}");
+            assert!(!plain.contains('$'), "{plain}");
+        }
+    }
+
+    #[test]
+    fn narrow_tables_wrap_all_cell_content_without_truncation() {
+        for (width, cell) in [(20, "abcdefghijklmnopqrstuvwxyz"), (24, "漢字漢字漢字漢字"), (8, "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦")] {
+            let source = format!("| A | B |\n| --- | --- |\n| {cell} | {cell} |");
+            let plain = plain_render(&source, width);
+            assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= width), "{plain}");
+            let body: String = plain.lines().skip_while(|line| !line.contains('┼')).skip(1)
+                .flat_map(str::chars).filter(|c| !c.is_whitespace() && *c != '│').collect();
+            assert!(!plain.contains('…'), "{plain}");
+            for character in cell.chars() {
+                assert_eq!(body.matches(character).count(), 2 * cell.matches(character).count(), "{plain}");
+            }
+        }
+        let plain = plain_render("| A | B |\n| --- | --- |\n| 漢字 | 文字 |", 2);
+        assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= 2), "{plain}");
+        assert_eq!(plain.chars().filter(|c| "漢字文字".contains(*c)).collect::<String>(), "漢字文字");
+    }
+
+    #[test]
+    fn tables_end_before_other_block_openings_containing_pipes() {
+        for (next, expected) in [
+            ("> quote | outside", "│ quote | outside"),
+            ("- list | outside", "• list | outside"),
+            ("## Heading | outside", "## Heading | outside"),
+        ] {
+            let source = format!("a | b\n--- | ---\nx | y\n{next}");
+            let plain = plain_render(&source, 80);
+            assert!(plain.lines().any(|line| line == expected), "{plain}");
+        }
+    }
+
+    #[test]
+    fn wide_paragraphs_and_joined_emoji_wrap_at_grapheme_boundaries() {
+        for word in ["漢字漢字漢字漢字漢字漢字漢字漢字", "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦", "👩🏽‍💻👩🏽‍💻👩🏽‍💻", "🇨🇭🇨🇭🇨🇭"] {
+            for width in [4, 8, 24] {
+                let plain = plain_render(word, width);
+                assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= width), "{plain}");
+                assert_eq!(plain.lines().collect::<String>(), word);
+                assert!(plain.lines().all(|line| !line.starts_with('\u{200d}') && !line.ends_with('\u{200d}')));
+            }
+        }
+        let plain = plain_render("# 👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦", 24);
+        assert_eq!(plain.lines().filter(|line| !line.is_empty()).count(), 1, "{plain}");
+        let styled = format!("{}e{}\u{301}X", fg(1), fg(2));
+        let chunks = wrap_styled_code(&styled, 1);
+        assert_eq!(plain_text(&chunks[0]), "e\u{301}");
+        assert_eq!(plain_text(&chunks[1]), "X");
+    }
+
+    #[test]
+    fn headings_fit_extremely_narrow_terminals() {
+        for level in 1..=6 {
+            for width in 1..=12 {
+                let source = format!("{} Alpha beta", "#".repeat(level));
+                let rendered = render_document(&source, &Theme::glow_light(), width, 0);
+                let plain = plain_text(&rendered);
+                assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= width), "width={width}: {plain}");
+                let text: String = plain.chars().filter(|c| !c.is_whitespace() && *c != '#').collect();
+                assert_eq!(text, "Alphabeta", "width={width}: {plain}");
+            }
+        }
+    }
+
     #[test]
     fn defaults_to_less_and_accepts_a_configured_pager() {
         assert_eq!(Config::default().pager, "less -R");
@@ -2015,19 +2077,19 @@ mod tests {
 
     #[test]
     fn heading_word_wrap_uses_remaining_space_and_ignores_style_only_words() {
-        assert_eq!(wrap_styled_heading("abcdefghijklmn end", 10), vec!["abcdefghij", "klmn end"]);
+        assert_eq!(wrap_styled_text("abcdefghijklmn end", 10, &[]), vec!["abcdefghij", "klmn end"]);
         let theme = Theme::glow_light();
         let styled = render_inline("**Alpha beta **", theme.heading_fg, &theme);
-        let chunks = wrap_styled_heading(&styled, 10);
+        let chunks = wrap_styled_text(&styled, 10, &[]);
         assert_eq!(chunks.len(), 1, "{chunks:?}");
         assert_eq!(visible_width(&chunks[0]), 10);
     }
 
     #[test]
     fn heading_wrap_preserves_zero_width_text_and_nonbreaking_spaces() {
-        assert_eq!(wrap_styled_heading("a \u{301} b", 20), vec!["a \u{301} b"]);
-        assert_eq!(wrap_styled_heading("\u{301} b", 20), vec!["\u{301} b"]);
-        assert_eq!(wrap_styled_heading("A\u{a0}B C", 4), vec!["A\u{a0}B", "C"]);
+        assert_eq!(wrap_styled_text("a \u{301} b", 20, &[]), vec!["a \u{301} b"]);
+        assert_eq!(wrap_styled_text("\u{301} b", 20, &[]), vec!["\u{301} b"]);
+        assert_eq!(wrap_styled_text("A\u{a0}B C", 4, &[]), vec!["A\u{a0}B", "C"]);
     }
 
     #[test]
@@ -2070,7 +2132,7 @@ mod tests {
             ("`Alpha beta gamma delta`", code_style(&theme)),
         ] {
             let content = render_inline(title, theme.heading_fg, &theme);
-            let chunks = wrap_styled_heading(&content, 12);
+            let chunks = wrap_styled_text(&content, 12, &[]);
             assert!(chunks.len() > 1);
             assert!(chunks.iter().all(|chunk| visible_width(chunk) <= 12));
             assert!(chunks.iter().all(|chunk| chunk.contains(&expected_style)), "{chunks:?}");
@@ -2080,14 +2142,13 @@ mod tests {
     #[test]
     fn wraps_code_after_punctuation_without_exposing_backticks() {
         let text = "Git commit hash (`git rev-parse HEAD`) and `uv.lock` hash";
-        let chunks = wrap_text(text, 23);
-        assert!(chunks.iter().any(|chunk| chunk.ends_with("`git`")));
-        assert!(chunks.iter().any(|chunk| chunk.starts_with("`rev-parse HEAD`")));
-        for chunk in chunks {
-            assert_eq!(chunk.matches('`').count() % 2, 0, "unpaired backtick: {chunk}");
-            let rendered = render_inline(&chunk, 234, &Theme::glow_light());
-            assert!(!rendered.contains('`'), "visible backtick: {}", chunk);
-        }
+        let theme = Theme::glow_light();
+        let content = render_inline_layout(text, &theme, &fg(theme.normal_fg), false);
+        let chunks = content.wrap(23);
+        let plain: Vec<_> = chunks.iter().map(|chunk| plain_text(chunk)).collect();
+        assert!(plain.iter().any(|chunk| chunk.ends_with("git")), "{plain:?}");
+        assert!(plain.iter().any(|chunk| chunk.starts_with("rev-parse HEAD")), "{plain:?}");
+        assert!(plain.iter().all(|chunk| !chunk.contains('`')), "{plain:?}");
     }
 
     #[test]
@@ -2225,6 +2286,9 @@ mod tests {
         assert_eq!(table_row("| Name | Age |"), Some(vec!["Name".into(), "Age".into()]));
         assert!(matches!(table_alignments("| --- | :---: | ---: |"), Some(ref alignments) if alignments.len() == 3));
         assert_eq!(table_row("Name | Note with `|`"), Some(vec!["Name".into(), "Note with `|`".into()]));
+        assert_eq!(table_row("A | ``b`c|d``"), Some(vec!["A".into(), "``b`c|d``".into()]));
+        assert_eq!(table_row(r"A\|B | C"), Some(vec!["A|B".into(), "C".into()]));
+        assert_eq!(table_row(r"A\\|B | C"), Some(vec![r"A\\".into(), "B".into(), "C".into()]));
     }
 
     #[test]

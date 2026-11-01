@@ -94,7 +94,7 @@ Tagged releases provide Linux x86_64/ARM64 and macOS Intel/Apple Silicon archive
 For example, to install a downloaded archive (replace `TARGET` with the appropriate suffix):
 
 ```sh
-version=0.8.0
+version=0.8.1
 TARGET=x86_64-unknown-linux-gnu
 archive="md-v${version}-${TARGET}.tar.gz"
 if command -v sha256sum >/dev/null; then

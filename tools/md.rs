@@ -161,7 +161,7 @@ fn main() {
         return;
     }
     if args.iter().any(|arg| arg == "--version") {
-        println!("md 0.8.0");
+        println!("md {}", env!("CARGO_PKG_VERSION"));
         return;
     }
 

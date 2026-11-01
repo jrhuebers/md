@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-01
+
 ### Fixed
 
 - Render triple-backtick inline code spans without mistaking them for fenced code blocks.
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Measure and wrap complete Unicode graphemes, including joined emoji, consistently across text, code, tables, and built-in pager clipping and search prompts.
 - Wrap long table-cell content instead of truncating it, stack cells when columns cannot fit, and end tables before following blockquotes, lists, and headings.
 - Reduce margins and omit oversized heading markers on extremely narrow terminals instead of overflowing the viewport.
+- Derive `md --version` from the Cargo package version so release binaries cannot report a stale hard-coded version.
 
 ## [0.8.0] - 2026-10-01
 
